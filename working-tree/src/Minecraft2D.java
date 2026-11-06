@@ -1,0 +1,2973 @@
+import javax.microedition.lcdui.*;
+import javax.microedition.midlet.*;
+import javax.microedition.rms.*;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.util.Enumeration;
+import java.util.Hashtable;
+import java.util.Random;
+import java.util.Vector;
+
+public class Minecraft2D extends MIDlet {
+    // true = ventanita de depuracion (RAM, FPS, chunks, posicion) mientras se juega
+static final boolean DEBUG = false;
+    static long memBase;   // memoria viva antes de crear el juego (solo DEBUG)
+
+    private Display display;
+    private Minecraft3DCanvas canvas;
+
+    public void startApp() {
+        display = Display.getDisplay(this);
+        if (DEBUG && canvas == null) {
+            Runtime rt = Runtime.getRuntime();
+            rt.gc();
+            memBase = rt.totalMemory() - rt.freeMemory();
+        }
+        if (canvas == null) canvas = new Minecraft3DCanvas(this, display);
+        display.setCurrent(canvas);
+        canvas.start();
+    }
+
+    public void pauseApp() {
+        if (canvas != null) canvas.stop();
+    }
+
+    public void destroyApp(boolean unconditional) {
+        if (canvas != null) canvas.stop();
+    }
+
+    void quit() {
+        destroyApp(true);
+        notifyDestroyed();
+    }
+}
+
+class Mob {
+    int type;          // 0 = oveja, 1 = pollo, 2 = vaca, 3 = zombie, 4 = creeper
+    float x, y, z, vy, ang;
+    int timer, hurt, flee, hp, atk, fuse;   // atk/fuse: zombie y creeper
+    boolean moving, ground;
+}
+
+class WorldInfo {
+    int id, seed, rid;
+    String name;
+}
+
+class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
+    // ---------------------------------------------------------------- constantes
+    // mundo infinito por chunks (CS debe ser 16: se usa >> 4 y & 15)
+    static final int CS = 16;            // lado del chunk en bloques
+    static final int H = 32;             // altura del mundo
+    static final int NC_MAX = 3;         // ventana maxima 3x3 (distancias > 7)
+
+    static final int CHB = CS * CS * H;  // bytes por chunk en RAM
+    static final int PB = CHB / 2;       // bytes por chunk empaquetado: 2 bloques por byte (ids 0..8 caben en 4 bits)
+    static final int SAVE_LIMIT = 16384; // al juntar 16 KB de chunks modificados se escriben al RecordStore
+    static final String LIST_STORE = "mcw_list", CFG_STORE = "mcw_cfg", OLD_STORE = "mc2dworld";
+    static final int[] RD_OPT = { 4, 7, 10, 13, 15 };   // distancia de renderizado en bloques
+    static final String[] RD_NAME = { "Minima", "Normal", "Lejos", "Muy lejos", "Extrema" };
+
+
+    static final int NONE = 0x7fffffff;  // slot de chunk vacio
+
+    static final int ST_MENU = 0, ST_PLAY = 1, ST_INV = 2, ST_DEAD = 3, ST_PAUSE = 4, ST_SET = 5,
+            ST_WORLDS = 6, ST_CREATE = 7, ST_CONFIRM = 8;
+    static final int A_PLAY = 1, A_QUIT = 2, A_RESUME = 3, A_SETTINGS = 4, A_TOMENU = 5, A_RD = 6, A_SETBACK = 7,
+            A_NEW = 8, A_WBACK = 9, A_CNAME = 10, A_CSEED = 11, A_CGO = 12, A_CBACK = 13, A_YES = 14, A_NO = 15;
+    static final int J_ENTER = 1, J_APPLY = 2, J_LEAVE = 3, J_SAVE = 4, J_FLUSH = 5;
+
+    static final int B_AIR = 0, B_GRASS = 1, B_DIRT = 2, B_STONE = 3, B_LOG = 4,
+            B_LEAVES = 5, B_PLANKS = 6, B_TABLE = 7, B_COBBLE = 8,
+            B_FURNACE = 9, B_SAPLING = 10, B_TORCH = 11;
+
+    static final int I_STICK = 20, I_PICK = 21, I_AXE = 22, I_SHOVEL = 23, I_SWORD = 24,
+            I_WOOL = 25, I_MUTTON = 26, I_CHICKEN = 27, I_FEATHER = 28, I_APPLE = 29,
+            I_BEEF = 30, I_STEAK = 31, I_COOKED_MUTTON = 32, I_COOKED_CHICKEN = 33, I_COAL = 34,
+            I_ROTTEN = 35, I_GUNPOWDER = 36;
+
+    static final float NEAR = 0.1f, FOV = 1.1f, EYE = 1.62f, GRAV = 0.08f, JUMP = 0.52f;
+    static final float REACH = 5f, MOB_REACH = 3.5f, LOOK = 0.08f, SPD = 0.16f, HW = 0.3f;
+    static final int TOOL_DUR = 59;
+    static final int OUT = 45;   // slot virtual de resultado de crafteo
+    static final int FURN = 4;   // craftN = 4: pantalla del horno (slots 36 entrada, 37 combustible, 38 salida)
+    static final int SMELT_T = 200;    // ticks (50 ms) por item fundido = 10 s
+    static final int DAY_LEN = 24000;  // ticks por dia completo = 20 min
+
+    // caras: +x, -x, +y, -y, +z, -z ; esquinas = x + 2y + 4z
+    static final int[][] FACE = { {1, 3, 7, 5}, {0, 4, 6, 2}, {2, 3, 7, 6}, {0, 4, 5, 1}, {4, 5, 7, 6}, {0, 2, 3, 1} };
+    static final int[] FSH = { 80, 80, 100, 50, 65, 65 };
+    static final float[] NX = { 1, -1, 0, 0, 0, 0 };
+    static final float[] NY = { 0, 0, 1, -1, 0, 0 };
+    static final float[] NZ = { 0, 0, 0, 0, 1, -1 };
+    static final int[][] WIRE = { {0, 1}, {2, 3}, {4, 5}, {6, 7}, {0, 2}, {1, 3}, {4, 6}, {5, 7}, {0, 4}, {1, 5}, {2, 6}, {3, 7} };
+
+    // ---------------------------------------------------------------- estado
+    final Object lock = new Object();
+    boolean running;
+    Thread thread;
+    Random rand = new Random();
+    Font font;
+    Graphics gg;
+    int sw, sh;
+    float halfW, halfH, focal;
+    int tick;
+
+    int state = ST_MENU;
+    boolean[] kd = new boolean[14];   // 0-9, 10 = *, 11 = #, 12 = L, 13 = R
+    int layout = 0;                   // 0 = A (caminar), 1 = B (camara)
+
+    // chunks en anillo: slot = coordenada del chunk mod NC
+    byte[][] chData;
+    int[] chCx, chCz;
+    boolean[] chDirty;
+    Hashtable pending = new Hashtable(); // chunks editados (empaquetados) esperando escribirse
+    Hashtable idx = new Hashtable();     // clave de chunk -> id de registro en el RecordStore
+    int pendBytes;
+    boolean needFlush, needSave, storeBroken, inWorld;
+    RecordStore rs;
+    byte[] rbuf = new byte[PB];
+    int ccx, ccz;                        // chunk central objetivo
+    int seed;
+    Vector mobs = new Vector();
+    int[] mobKey = new int[64];
+    int[] mobOrd = new int[64];
+    int[] invX, invZ, invY = new int[H];
+    int spawnTimer, hostTimer;
+    // dia / noche
+    int worldTime = 1000, bright = 100;
+    // horno (uno por mundo, compartido por todos los hornos colocados)
+    int[] fId = new int[3], fCnt = new int[3];
+    int fBurn, fBurnMax, fProg;
+    // plantitas (saplings) esperando crecer
+    int[] sapX = new int[32], sapY = new int[32], sapZ = new int[32], sapT = new int[32];
+    int sapN;
+    // antorchas cercanas (para iluminar de noche)
+    float[] torchX = new float[16], torchY = new float[16], torchZ = new float[16];
+    int torchN;
+    float[][] cowParts, zombieParts, creeperParts;
+
+    // depuracion
+    // ventana de chunks (depende de la distancia de renderizado)
+    int rd = 7, nc = 2, nch = 4, nb = 15, rdIdx = 1, rdApplied = 1;
+    float cullSq = 528f;
+
+    // mundos y menus
+    Minecraft2D midlet;
+    Display disp;
+    Vector worlds = new Vector();
+    WorldInfo curWorld, jobWorld, delTarget;
+    String curStore = "";
+    int hdrRid, autoT;
+    volatile int job;
+    String busy;
+    Font fontBig, fontMid;
+    int[] navIds = new int[] { 0 };
+    int navN = 1, navSel, wScroll, wVis = 3;
+    int[] htX = new int[64], htY = new int[64], htW = new int[64], htH = new int[64], htId = new int[64];
+    int htN, btnW, btnH, btnX;
+    int tpX, tpY, tpScroll0;
+    boolean tpDown, tpDrag;
+    String cName = "", cSeedTxt = "";
+    int editing;
+    Command cmdOk = new Command("OK", Command.OK, 1);
+    Command cmdCancel = new Command("Cancelar", Command.CANCEL, 2);
+
+    long dbgT0, dbgMemT;
+    int dbgFrames, dbgFps;
+    String dbgMem = "", dbgInfo = "";
+
+    // jugador (px,py,pz = pies)
+    float px, py, pz, yaw, pitch, vy, fallDist;
+    boolean onGround, moving;
+    int health = 20, hunger = 20, hungerTimer, regenTimer, starveTimer, dmgFlash;
+
+    // camara / render
+    float camX, camY, camZ, cosY, sinY, cosP, sinP, fx, fy, fz;
+    int[] ox, oy = new int[H], oz;
+    float[] quad = new float[12];
+    float[] clipA = new float[30];
+    float[] cc = new float[24];
+    int[] sxs = new int[10], sys = new int[10];
+
+    // objetivo
+    int tx = -1, ty = -1, tz = -1, ax = -1, ay = -1, az = -1;
+    Mob tMob;
+
+    // accion
+    int starTicks, attackCd, mineProg, mineX = -1, mineY = -1, mineZ = -1;
+    boolean starConsumed;
+
+    // inventario: 0-35 inventario (0-8 hotbar), 36-44 grilla, 45 resultado
+    int[] slId = new int[46], slCnt = new int[46], slDur = new int[46];
+    int sel, labelT;
+    int heldId, heldCnt, heldDur;
+    int cursor, craftN = 2, slS;
+    int[] slx = new int[46], sly = new int[46];
+    boolean[] slActive = new boolean[46];
+
+    // datos de items
+    String[] names = new String[40];
+    String[] tag = new String[40];
+    int[] icol = new int[40];
+    int[] cTop = new int[12], cSide = new int[12], cBot = new int[12];
+    int[][] shadedCol = new int[12][6];
+    float[] hard = new float[12];
+    float[][] sheepParts, chickenParts;
+
+    // recetas
+    int nrec;
+    int[] rw = new int[16], rh = new int[16], rOut = new int[16], rCnt = new int[16];
+    int[][] rPat = new int[16][];
+
+    // ---------------------------------------------------------------- inicio
+    public Minecraft3DCanvas(Minecraft2D m, Display d) {
+        midlet = m;
+        disp = d;
+        setFullScreenMode(true);
+        sw = getWidth();
+        sh = getHeight();
+        font = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_PLAIN, Font.SIZE_SMALL);
+        fontMid = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_BOLD, Font.SIZE_MEDIUM);
+        fontBig = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_BOLD, Font.SIZE_LARGE);
+        initTables();
+        initRecipes();
+        loadSettings();
+        setupWindow(RD_OPT[rdIdx]);
+        go(ST_MENU);
+    }
+
+    protected void sizeChanged(int w, int h) {
+        sw = w;
+        sh = h;
+    }
+
+    protected void showNotify() {
+        setFullScreenMode(true);
+    }
+
+    // al irse la app a segundo plano: pausa y guarda el mundo
+    protected void hideNotify() {
+        synchronized (lock) {
+            clearKeys();
+            if (inWorld) {
+                if (state == ST_PLAY) go(ST_PAUSE);
+                saveAll();
+            }
+        }
+    }
+
+    public void start() {
+        if (running) return;
+        running = true;
+        thread = new Thread(this);
+        thread.start();
+    }
+
+    public void stop() {
+        synchronized (lock) {
+            if (inWorld) {
+                if (state == ST_PLAY) go(ST_PAUSE);
+                saveAll();
+            }
+            closeStore();
+        }
+        running = false;
+    }
+
+    public void run() {
+        while (running) {
+            long t0 = System.currentTimeMillis();
+            update();
+            int j = job;
+            if (j == 0 && needSave) j = J_SAVE;
+            if (j == 0 && needFlush) j = J_FLUSH;
+            if (j != 0) {
+                job = 0;
+                needSave = false;
+                runJob(j);
+            }
+            repaint();
+            long dt = System.currentTimeMillis() - t0;
+            long sl = 50 - dt;
+            if (sl < 5) sl = 5;
+            try { Thread.sleep(sl); } catch (Exception e) {}
+        }
+        closeStore();
+    }
+
+    // trabajos pesados (cargar, guardar): se muestra el cartel y se congela el juego
+    void runJob(int j) {
+        if (j == J_ENTER) busy = "Cargando mundo...";
+        else if (j == J_APPLY) busy = "Cargando...";
+        else busy = "Guardando...";
+        repaint();
+        serviceRepaints();
+        try {
+            synchronized (lock) {
+                if (j == J_ENTER) enterWorld(jobWorld);
+                else if (j == J_APPLY) applyRd();
+                else if (j == J_LEAVE) { leaveWorld(); openMain(); }
+                else if (j == J_SAVE) saveAll();
+                else flushPending();
+            }
+        } catch (Throwable th) {
+            synchronized (lock) {
+                if (j == J_ENTER) {
+                    inWorld = false;
+                    closeStore();
+                    openWorlds();
+                }
+            }
+        }
+        busy = null;
+    }
+
+    // ---------------------------------------------------------------- utilidades
+    int rnd(int n) {
+        return (rand.nextInt() & 0x7fffffff) % n;
+    }
+
+    float rndf() {
+        return rnd(10000) / 10000f;
+    }
+
+    static int ifloor(float f) {
+        int i = (int) f;
+        return (f < i) ? i - 1 : i;
+    }
+
+    static int shade(int c, int pct) {
+        int r = ((c >> 16) & 255) * pct / 100;
+        int g = ((c >> 8) & 255) * pct / 100;
+        int b = (c & 255) * pct / 100;
+        return (r << 16) | (g << 8) | b;
+    }
+
+    int slotOf(int cx, int cz) {
+        int sx = cx % nc, sz = cz % nc;
+        if (sx < 0) sx += nc;
+        if (sz < 0) sz += nc;
+        return sz * nc + sx;
+    }
+
+    // datos del chunk que contiene (x,z), o null si no esta cargado
+    byte[] chunkFor(int x, int z) {
+        int cx = x >> 4, cz = z >> 4;
+        int s = slotOf(cx, cz);
+        if (chCx[s] != cx || chCz[s] != cz) return null;
+        return chData[s];
+    }
+
+    // indice dentro del chunk: columna contigua en y
+    int blockAt(int x, int y, int z) {
+        if (y < 0 || y >= H) return 0;
+        byte[] cd = chunkFor(x, z);
+        if (cd == null) return 0;
+        return cd[(((x & 15) << 4) + (z & 15)) * H + y];
+    }
+
+    void setBlock(int x, int y, int z, int b) {
+        if (y < 0 || y >= H) return;
+        int cx = x >> 4, cz = z >> 4;
+        int s = slotOf(cx, cz);
+        if (chCx[s] != cx || chCz[s] != cz) return;
+        chData[s][(((x & 15) << 4) + (z & 15)) * H + y] = (byte) b;
+        chDirty[s] = true;
+    }
+
+    boolean solidAt(int x, int y, int z) {
+        if (y < 0) return true;
+        if (y >= H) return false;
+        byte[] cd = chunkFor(x, z);
+        if (cd == null) return true;
+        int b = cd[(((x & 15) << 4) + (z & 15)) * H + y];
+        return b != 0 && b != B_SAPLING && b != B_TORCH;
+    }
+
+    boolean boxCollides(float x, float y, float z, float hw, float h) {
+        int x0 = ifloor(x - hw), x1 = ifloor(x + hw);
+        int y0 = ifloor(y), y1 = ifloor(y + h);
+        int z0 = ifloor(z - hw), z1 = ifloor(z + hw);
+        for (int xx = x0; xx <= x1; xx++)
+            for (int yy = y0; yy <= y1; yy++)
+                for (int zz = z0; zz <= z1; zz++)
+                    if (solidAt(xx, yy, zz)) return true;
+        return false;
+    }
+
+    int topY(int x, int z) {
+        for (int y = H - 1; y >= 0; y--) if (blockAt(x, y, z) != 0) return y;
+        return -1;
+    }
+
+    boolean isTool(int id) { return id >= I_PICK && id <= I_SWORD; }
+    boolean isBlockItem(int id) { return id >= 1 && id <= 11; }
+    boolean isFood(int id) {
+        return id == I_APPLE || id == I_MUTTON || id == I_CHICKEN || id == I_BEEF || id == I_STEAK
+                || id == I_COOKED_MUTTON || id == I_COOKED_CHICKEN || id == I_ROTTEN;
+    }
+    int foodVal(int id) {
+        if (id == I_STEAK) return 8;
+        if (id == I_COOKED_MUTTON || id == I_COOKED_CHICKEN) return 6;
+        if (id == I_APPLE) return 4;
+        if (id == I_BEEF) return 3;
+        return 2;
+    }
+    int maxStack(int id) { return isTool(id) ? 1 : 64; }
+
+    // ---------------------------------------------------------------- tablas
+    void initTables() {
+        for (int i = 0; i < 40; i++) { names[i] = "?"; tag[i] = ""; icol[i] = 0x808080; }
+        names[0] = "";
+        names[1] = "Pasto"; names[2] = "Tierra"; names[3] = "Piedra"; names[4] = "Tronco";
+        names[5] = "Hojas"; names[6] = "Tablones"; names[7] = "Mesa de crafteo"; names[8] = "Adoquin";
+        names[I_STICK] = "Palo"; names[I_PICK] = "Pico de madera"; names[I_AXE] = "Hacha de madera";
+        names[I_SHOVEL] = "Pala de madera"; names[I_SWORD] = "Espada de madera";
+        names[I_WOOL] = "Lana"; names[I_MUTTON] = "Cordero crudo"; names[I_CHICKEN] = "Pollo crudo";
+        names[I_FEATHER] = "Pluma"; names[I_APPLE] = "Manzana";
+        names[B_FURNACE] = "Horno"; names[B_SAPLING] = "Brote"; names[B_TORCH] = "Antorcha";
+        names[I_BEEF] = "Carne de vaca cruda"; names[I_STEAK] = "Bistec";
+        names[I_COOKED_MUTTON] = "Cordero cocido"; names[I_COOKED_CHICKEN] = "Pollo cocido";
+        names[I_COAL] = "Carbon vegetal"; names[I_ROTTEN] = "Carne podrida"; names[I_GUNPOWDER] = "Polvora";
+        icol[I_BEEF] = 0xA83232; icol[I_STEAK] = 0x6B3A22; icol[I_COOKED_MUTTON] = 0x8A5A3A;
+        icol[I_COOKED_CHICKEN] = 0xC8905A; icol[I_COAL] = 0x2A2A2A; icol[I_ROTTEN] = 0x6B7A3A;
+        icol[I_GUNPOWDER] = 0x555555;
+
+        tag[I_PICK] = "Pi"; tag[I_AXE] = "Ha"; tag[I_SHOVEL] = "Pa"; tag[I_SWORD] = "Es";
+        icol[I_STICK] = 0x8B6B3A;
+        icol[I_PICK] = 0xC49A55; icol[I_AXE] = 0xC49A55; icol[I_SHOVEL] = 0xC49A55; icol[I_SWORD] = 0xC49A55;
+        icol[I_WOOL] = 0xEFEFEF; icol[I_MUTTON] = 0xB5453F; icol[I_CHICKEN] = 0xE9B9A3;
+        icol[I_FEATHER] = 0xD8D8D8; icol[I_APPLE] = 0xD02020;
+
+        cTop[1] = 0x55A630; cSide[1] = 0x7B5B34; cBot[1] = 0x7B5B34;
+        cTop[2] = 0x7B5B34; cSide[2] = 0x7B5B34; cBot[2] = 0x7B5B34;
+        cTop[3] = 0x7D7D7D; cSide[3] = 0x7D7D7D; cBot[3] = 0x7D7D7D;
+        cTop[4] = 0xA98B54; cSide[4] = 0x5E4426; cBot[4] = 0xA98B54;
+        cTop[5] = 0x2F7A2A; cSide[5] = 0x2F7A2A; cBot[5] = 0x2F7A2A;
+        cTop[6] = 0xB8945A; cSide[6] = 0xB8945A; cBot[6] = 0xB8945A;
+        cTop[7] = 0x8E6A3C; cSide[7] = 0x6B4A2A; cBot[7] = 0xB8945A;
+        cTop[8] = 0x666666; cSide[8] = 0x666666; cBot[8] = 0x666666;
+        cTop[9] = 0x8A8A8A; cSide[9] = 0x4F4F4F; cBot[9] = 0x6A6A6A;
+        cTop[10] = 0x5FD04A; cSide[10] = 0x3FA03A; cBot[10] = 0x3FA03A;
+        cTop[11] = 0xFFD040; cSide[11] = 0x8B6B3A; cBot[11] = 0x8B6B3A;
+        for (int b = 1; b < 12; b++) {
+            for (int f = 0; f < 6; f++) {
+                int base = (f == 2) ? cTop[b] : (f == 3 ? cBot[b] : cSide[b]);
+                shadedCol[b][f] = shade(base, FSH[f]);
+            }
+        }
+        hard[1] = 0.6f; hard[2] = 0.5f; hard[3] = 1.5f; hard[4] = 2f;
+        hard[5] = 0.2f; hard[6] = 2f; hard[7] = 2.5f; hard[8] = 2f;
+        hard[9] = 3.5f; hard[10] = 0f; hard[11] = 0f;
+
+        sheepParts = new float[][] {
+            { 0f, 0.65f, 0f, 0.28f, 0.27f, 0.42f, 0xEEEEEE },
+            { 0f, 0.85f, 0.52f, 0.16f, 0.16f, 0.16f, 0xD2B48C },
+            { 0.17f, 0.2f, 0.28f, 0.06f, 0.2f, 0.06f, 0xBFA982 },
+            { -0.17f, 0.2f, 0.28f, 0.06f, 0.2f, 0.06f, 0xBFA982 },
+            { 0.17f, 0.2f, -0.28f, 0.06f, 0.2f, 0.06f, 0xBFA982 },
+            { -0.17f, 0.2f, -0.28f, 0.06f, 0.2f, 0.06f, 0xBFA982 }
+        };
+        chickenParts = new float[][] {
+            { 0f, 0.33f, 0f, 0.14f, 0.14f, 0.2f, 0xF4F4F4 },
+            { 0f, 0.55f, 0.18f, 0.07f, 0.09f, 0.07f, 0xF4F4F4 },
+            { 0f, 0.52f, 0.27f, 0.03f, 0.02f, 0.04f, 0xF0C020 },
+            { 0f, 0.66f, 0.18f, 0.02f, 0.03f, 0.04f, 0xD02020 },
+            { 0.05f, 0.1f, 0f, 0.02f, 0.1f, 0.02f, 0xF0C020 },
+            { -0.05f, 0.1f, 0f, 0.02f, 0.1f, 0.02f, 0xF0C020 }
+        };
+        cowParts = new float[][] {
+            { 0f, 0.75f, 0f, 0.30f, 0.30f, 0.50f, 0x4A3A2A },
+            { 0f, 0.80f, 0.05f, 0.31f, 0.10f, 0.22f, 0xEFEFEF },
+            { 0f, 0.95f, 0.60f, 0.18f, 0.18f, 0.18f, 0x5A4A3A },
+            { 0f, 0.86f, 0.80f, 0.12f, 0.07f, 0.04f, 0xD8B8A0 },
+            { 0.18f, 0.25f, 0.35f, 0.07f, 0.25f, 0.07f, 0x3A2E22 },
+            { -0.18f, 0.25f, 0.35f, 0.07f, 0.25f, 0.07f, 0x3A2E22 },
+            { 0.18f, 0.25f, -0.35f, 0.07f, 0.25f, 0.07f, 0x3A2E22 },
+            { -0.18f, 0.25f, -0.35f, 0.07f, 0.25f, 0.07f, 0x3A2E22 }
+        };
+        zombieParts = new float[][] {
+            { 0.12f, 0.4f, 0f, 0.10f, 0.40f, 0.10f, 0x2F3F8F },
+            { -0.12f, 0.4f, 0f, 0.10f, 0.40f, 0.10f, 0x2F3F8F },
+            { 0f, 1.1f, 0f, 0.22f, 0.35f, 0.12f, 0x3FA0A0 },
+            { 0f, 1.65f, 0f, 0.20f, 0.20f, 0.20f, 0x4A8A4A },
+            { 0.30f, 1.25f, 0.25f, 0.08f, 0.08f, 0.30f, 0x4A8A4A },
+            { -0.30f, 1.25f, 0.25f, 0.08f, 0.08f, 0.30f, 0x4A8A4A }
+        };
+        creeperParts = new float[][] {
+            { 0.12f, 0.2f, 0.12f, 0.10f, 0.20f, 0.10f, 0x3A8A3A },
+            { -0.12f, 0.2f, 0.12f, 0.10f, 0.20f, 0.10f, 0x3A8A3A },
+            { 0.12f, 0.2f, -0.12f, 0.10f, 0.20f, 0.10f, 0x3A8A3A },
+            { -0.12f, 0.2f, -0.12f, 0.10f, 0.20f, 0.10f, 0x3A8A3A },
+            { 0f, 0.8f, 0f, 0.20f, 0.40f, 0.12f, 0x4AAA4A },
+            { 0f, 1.4f, 0f, 0.20f, 0.20f, 0.20f, 0x5ABA5A },
+            { 0.08f, 1.45f, 0.20f, 0.06f, 0.06f, 0.01f, 0x101010 },
+            { -0.08f, 1.45f, 0.20f, 0.06f, 0.06f, 0.01f, 0x101010 },
+            { 0f, 1.30f, 0.20f, 0.05f, 0.07f, 0.01f, 0x101010 }
+        };
+    }
+
+    void rec(int w, int h, int[] pat, int out, int cnt) {
+        rw[nrec] = w; rh[nrec] = h; rPat[nrec] = pat; rOut[nrec] = out; rCnt[nrec] = cnt;
+        nrec++;
+    }
+
+    void initRecipes() {
+        int P = B_PLANKS, S = I_STICK;
+        nrec = 0;
+        rec(1, 1, new int[] { B_LOG }, B_PLANKS, 4);
+        rec(1, 2, new int[] { P, P }, I_STICK, 4);
+        rec(2, 2, new int[] { P, P, P, P }, B_TABLE, 1);
+        rec(3, 3, new int[] { P, P, P, 0, S, 0, 0, S, 0 }, I_PICK, 1);
+        rec(2, 3, new int[] { P, P, P, S, 0, S }, I_AXE, 1);
+        rec(1, 3, new int[] { P, S, S }, I_SHOVEL, 1);
+        rec(1, 3, new int[] { P, P, S }, I_SWORD, 1);
+        rec(1, 2, new int[] { I_COAL, S }, B_TORCH, 4);
+        int C = B_COBBLE;
+        rec(3, 3, new int[] { C, C, C, C, 0, C, C, C, C }, B_FURNACE, 1);
+    }
+
+    // ---------------------------------------------------------------- mundo
+    int hash(int x, int z, int salt) {
+        int h = x * 374761393 + z * 668265263 + salt * 1274126177 + seed;
+        h = (h ^ (h >>> 13)) * 1274126177;
+        h = h ^ (h >>> 16);
+        return h & 0x7fffffff;
+    }
+
+    float lat(int ix, int iz, int salt) {
+        return (hash(ix, iz, salt) % 1000) / 1000f;
+    }
+
+    // ruido suave por interpolacion; shift = log2 del tamano de celda
+    float noise(int x, int z, int shift, int salt) {
+        int ix = x >> shift, iz = z >> shift;
+        int mask = (1 << shift) - 1;
+        float size = (float) (1 << shift);
+        float u = (x & mask) / size, w = (z & mask) / size;
+        u = u * u * (3f - 2f * u);
+        w = w * w * (3f - 2f * w);
+        float n00 = lat(ix, iz, salt), n10 = lat(ix + 1, iz, salt);
+        float n01 = lat(ix, iz + 1, salt), n11 = lat(ix + 1, iz + 1, salt);
+        float p = n00 + (n10 - n00) * u;
+        float q = n01 + (n11 - n01) * u;
+        return p + (q - p) * w;
+    }
+
+    int groundH(int x, int z) {
+        float v1 = noise(x, z, 3, 1), v2 = noise(x, z, 5, 2);
+        return 12 + (int) (v1 * 4f + v2 * 6f);
+    }
+
+    boolean treeAt(int x, int z) {
+        if (hash(x, z, 7) % 48 != 0) return false;
+        if (Math.abs(x) + Math.abs(z) < 5) return false;
+        return noise(x, z, 3, 1) <= 0.82f;
+    }
+
+    void putTree(byte[] d, int x0, int z0, int x, int y, int z, int b, boolean force) {
+        if (y < 0 || y >= H) return;
+        int lx = x - x0, lz = z - z0;
+        if (lx < 0 || lx >= CS || lz < 0 || lz >= CS) return;
+        int i = (lx * CS + lz) * H + y;
+        if (force || d[i] == 0) d[i] = (byte) b;
+    }
+
+    void genChunk(int s, int cx, int cz) {
+        byte[] d = chData[s];
+        for (int i = 0; i < CHB; i++) d[i] = 0;
+        int x0 = cx << 4, z0 = cz << 4;
+        for (int lx = 0; lx < CS; lx++) {
+            for (int lz = 0; lz < CS; lz++) {
+                int x = x0 + lx, z = z0 + lz;
+                float v1 = noise(x, z, 3, 1), v2 = noise(x, z, 5, 2);
+                int h = 12 + (int) (v1 * 4f + v2 * 6f);
+                int base = (lx * CS + lz) * H;
+                for (int y = 0; y < h; y++) {
+                    int blk;
+                    if (y == h - 1) blk = B_GRASS;
+                    else if (y >= h - 3) blk = B_DIRT;
+                    else blk = B_STONE;
+                    d[base + y] = (byte) blk;
+                }
+                if (v1 > 0.82f) {
+                    d[base + h - 1] = B_STONE;
+                    d[base + h - 2] = B_STONE;
+                }
+            }
+        }
+        // arboles: se evaluan tambien los del borde vecino para que no se corten
+        for (int qx = x0 - 2; qx < x0 + CS + 2; qx++) {
+            for (int qz = z0 - 2; qz < z0 + CS + 2; qz++) {
+                if (!treeAt(qx, qz)) continue;
+                int top = groundH(qx, qz) - 1;
+                int th = 4 + (hash(qx, qz, 8) & 1);
+                for (int dy = th - 2; dy <= th + 1; dy++) {
+                    int r = (dy <= th - 1) ? 2 : 1;
+                    for (int dx = -r; dx <= r; dx++) {
+                        for (int dz = -r; dz <= r; dz++) {
+                            if (r == 2 && Math.abs(dx) == 2 && Math.abs(dz) == 2
+                                    && (hash(qx + dx, qz + dz, 9) & 1) == 0) continue;
+                            if (dy == th + 1 && Math.abs(dx) + Math.abs(dz) > 1) continue;
+                            putTree(d, x0, z0, qx + dx, top + dy, qz + dz, B_LEAVES, false);
+                        }
+                    }
+                }
+                for (int dy = 1; dy <= th; dy++) putTree(d, x0, z0, qx, top + dy, qz, B_LOG, true);
+            }
+        }
+    }
+
+    int chunkKey(int cx, int cz) {
+        return ((cx & 0xFFFF) << 16) | (cz & 0xFFFF);
+    }
+
+    byte[] packChunk(byte[] d) {
+        byte[] p = new byte[PB];
+        for (int i = 0; i < PB; i++) p[i] = (byte) ((d[2 * i] & 15) | ((d[2 * i + 1] & 15) << 4));
+        return p;
+    }
+
+    void unpackChunk(byte[] p, byte[] d) {
+        for (int i = 0; i < PB; i++) {
+            int v = p[i] & 0xFF;
+            d[2 * i] = (byte) (v & 15);
+            d[2 * i + 1] = (byte) (v >> 4);
+        }
+    }
+
+    void openStore() throws RecordStoreException {
+        if (rs == null) rs = RecordStore.openRecordStore(curStore, true);
+    }
+
+    void closeStore() {
+        if (rs != null) {
+            try { rs.closeRecordStore(); } catch (Exception e) {}
+            rs = null;
+        }
+    }
+
+    // borra por completo el RecordStore del mundo actual
+    void wipeWorldStore() {
+        closeStore();
+        idx.clear();
+        pending.clear();
+        pendBytes = 0;
+        needFlush = false;
+        storeBroken = false;
+        hdrRid = 0;
+        try { RecordStore.deleteRecordStore(curStore); } catch (Exception e) {}
+    }
+
+    boolean readStore(Integer k, byte[] d) {
+        Integer rid = (Integer) idx.get(k);
+        if (rid == null || storeBroken) return false;
+        try {
+            openStore();
+            int n = rs.getRecord(rid.intValue(), rbuf, 0);
+            if (n != PB) return false;
+            unpackChunk(rbuf, d);
+            return true;
+        } catch (Exception e) {
+            storeBroken = true;
+            return false;
+        }
+    }
+
+    // registro cabecera del mundo: semilla, posicion, vida, inventario e indice de chunks
+    void writeHeader() {
+        if (storeBroken) return;
+        try {
+            openStore();
+            ByteArrayOutputStream bo = new ByteArrayOutputStream();
+            DataOutputStream o = new DataOutputStream(bo);
+            o.writeByte(2);
+            o.writeInt(seed);
+            o.writeFloat(px); o.writeFloat(py); o.writeFloat(pz);
+            o.writeFloat(yaw); o.writeFloat(pitch);
+            o.writeInt(health); o.writeInt(hunger); o.writeInt(sel); o.writeInt(layout);
+            for (int i = 0; i < 36; i++) {
+                o.writeByte(slId[i]);
+                o.writeByte(slCnt[i]);
+                o.writeShort(slDur[i]);
+            }
+            o.writeInt(idx.size());
+            Enumeration en = idx.keys();
+            while (en.hasMoreElements()) {
+                Integer k = (Integer) en.nextElement();
+                o.writeInt(k.intValue());
+                o.writeInt(((Integer) idx.get(k)).intValue());
+            }
+            o.writeInt(worldTime);
+            for (int i = 0; i < 3; i++) { o.writeByte(fId[i]); o.writeByte(fCnt[i]); }
+            o.writeShort(fBurn); o.writeShort(fBurnMax); o.writeShort(fProg);
+            o.flush();
+            byte[] b = bo.toByteArray();
+            if (hdrRid == 0) hdrRid = rs.addRecord(b, 0, b.length);
+            else rs.setRecord(hdrRid, b, 0, b.length);
+        } catch (Exception e) {
+            storeBroken = true;
+        }
+    }
+
+    boolean readHeader() {
+        try {
+            openStore();
+            byte[] b = rs.getRecord(1);
+            DataInputStream in = new DataInputStream(new ByteArrayInputStream(b));
+            int ver = in.readByte();
+            if (ver != 1 && ver != 2) return false;
+            seed = in.readInt();
+            px = in.readFloat(); py = in.readFloat(); pz = in.readFloat();
+            yaw = in.readFloat(); pitch = in.readFloat();
+            health = in.readInt(); hunger = in.readInt(); sel = in.readInt(); layout = in.readInt();
+            for (int i = 0; i < 36; i++) {
+                slId[i] = in.readByte();
+                slCnt[i] = in.readByte();
+                slDur[i] = in.readShort();
+                if (slId[i] < 0 || slId[i] > 39 || slCnt[i] < 0 || slCnt[i] > 64) { slId[i] = 0; slCnt[i] = 0; slDur[i] = 0; }
+                if (slId[i] == 0) { slCnt[i] = 0; slDur[i] = 0; }
+            }
+            int n = in.readInt();
+            for (int j = 0; j < n; j++) {
+                int k = in.readInt();
+                int rid = in.readInt();
+                idx.put(new Integer(k), new Integer(rid));
+            }
+            if (ver >= 2) {
+                worldTime = in.readInt();
+                for (int i = 0; i < 3; i++) {
+                    fId[i] = in.readByte();
+                    fCnt[i] = in.readByte();
+                    if (fId[i] < 0 || fId[i] > 39 || fCnt[i] < 0 || fCnt[i] > 64) { fId[i] = 0; fCnt[i] = 0; }
+                    if (fId[i] == 0) fCnt[i] = 0;
+                }
+                fBurn = in.readShort(); fBurnMax = in.readShort(); fProg = in.readShort();
+                if (worldTime < 0) worldTime = 0;
+                if (fBurn < 0) fBurn = 0;
+                if (fProg < 0 || fProg >= SMELT_T) fProg = 0;
+            }
+            if (health < 1) health = 1;
+            if (health > 20) health = 20;
+            if (hunger < 0) hunger = 0;
+            if (hunger > 20) hunger = 20;
+            if (sel < 0 || sel > 8) sel = 0;
+            if (layout < 0 || layout > 1) layout = 0;
+            hdrRid = 1;
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    // escribe todos los chunks pendientes y la cabecera; si falla, quedan en RAM
+    void flushPending() {
+        needFlush = false;
+        if (storeBroken) return;
+        if (hdrRid == 0) writeHeader();
+        if (storeBroken) return;
+        try {
+            openStore();
+            Enumeration en = pending.keys();
+            while (en.hasMoreElements()) {
+                Integer k = (Integer) en.nextElement();
+                byte[] p = (byte[]) pending.get(k);
+                Integer rid = (Integer) idx.get(k);
+                if (rid != null) {
+                    rs.setRecord(rid.intValue(), p, 0, PB);
+                } else {
+                    int id = rs.addRecord(p, 0, PB);
+                    idx.put(k, new Integer(id));
+                }
+            }
+            pending.clear();
+            pendBytes = 0;
+        } catch (Exception e) {
+            storeBroken = true;
+            return;
+        }
+        writeHeader();
+    }
+
+    // guarda todo el mundo: chunks modificados que estan en RAM + cabecera
+    void saveAll() {
+        if (!inWorld) return;
+        storeBroken = false;
+        for (int s = 0; s < nch; s++) {
+            if (chCx[s] != NONE && chDirty[s]) {
+                Object old = pending.put(new Integer(chunkKey(chCx[s], chCz[s])), packChunk(chData[s]));
+                if (old == null) pendBytes += PB;
+                chDirty[s] = false;
+            }
+        }
+        flushPending();
+    }
+
+    void unloadSlot(int s) {
+        if (chCx[s] == NONE) return;
+        if (chDirty[s]) {
+            Object old = pending.put(new Integer(chunkKey(chCx[s], chCz[s])), packChunk(chData[s]));
+            if (old == null) pendBytes += PB;
+            chDirty[s] = false;
+            if (pendBytes >= SAVE_LIMIT && !storeBroken) needFlush = true;
+        }
+        chCx[s] = NONE;
+        chCz[s] = NONE;
+    }
+
+    void loadChunk(int s, int cx, int cz) {
+        unloadSlot(s);
+        Integer k = new Integer(chunkKey(cx, cz));
+        boolean fresh = false;
+        byte[] p = (byte[]) pending.get(k);
+        if (p != null) {
+            pending.remove(k);
+            pendBytes -= PB;
+            unpackChunk(p, chData[s]);
+            chDirty[s] = true;
+        } else if (readStore(k, chData[s])) {
+            chDirty[s] = false;
+        } else {
+            genChunk(s, cx, cz);
+            chDirty[s] = false;
+            fresh = true;
+        }
+        chCx[s] = cx;
+        chCz[s] = cz;
+        if (fresh) spawnInChunk(cx, cz);
+    }
+
+    // ventana de chunks: nc x nc en RAM (2x2 hasta distancia 7, 3x3 para distancias mayores)
+    void setupWindow(int newRd) {
+        rd = newRd;
+        nb = 2 * rd + 1;
+        cullSq = 2f * (rd + 1) * (rd + 1) + 400f;
+        int nn = (rd <= 7) ? 2 : 3;
+        if (chData == null || nn != nc) {
+            chData = null;
+            nc = nn;
+            nch = nc * nc;
+            chData = new byte[nch][];
+            chCx = new int[nch];
+            chCz = new int[nch];
+            chDirty = new boolean[nch];
+            for (int i = 0; i < nch; i++) {
+                chData[i] = new byte[CHB];
+                chCx[i] = NONE;
+                chCz[i] = NONE;
+            }
+        }
+        ox = new int[nb];
+        oz = new int[nb];
+        invX = new int[nb];
+        invZ = new int[nb];
+        buildOrder(ox, nb, rd);
+        buildOrder(oz, nb, rd);
+        for (int i = 0; i < nb; i++) { invX[ox[i]] = i; invZ[oz[i]] = i; }
+    }
+
+    // origen de la ventana en un eje: se mantiene mientras cubra el radio de dibujo, si no se recentra
+    int pickOrigin(int cur, int b, boolean force) {
+        if (!force && b - rd >= (cur << 4) && b + rd <= ((cur + nc) << 4) - 1) return cur;
+        return ifloor(b / 16f - nc / 2f + 0.5f);
+    }
+
+    void updateWindow(boolean force) {
+        ccx = pickOrigin(ccx, ifloor(px), force);
+        ccz = pickOrigin(ccz, ifloor(pz), force);
+    }
+
+    // carga hasta max chunks faltantes alrededor de (ccx,ccz); devuelve cuantos cargo
+    int loadMissing(int max) {
+        int n = 0;
+        for (int dz = 0; dz < nc && n < max; dz++) {
+            for (int dx = 0; dx < nc && n < max; dx++) {
+                int cx = ccx + dx, cz = ccz + dz;
+                int s = slotOf(cx, cz);
+                if (chCx[s] == cx && chCz[s] == cz) continue;
+                loadChunk(s, cx, cz);
+                n++;
+            }
+        }
+        if (n > 0) dropOrphanMobs();
+        return n;
+    }
+
+    void dropOrphanMobs() {
+        for (int i = mobs.size() - 1; i >= 0; i--) {
+            Mob m = (Mob) mobs.elementAt(i);
+            if (chunkFor(ifloor(m.x), ifloor(m.z)) == null) mobs.removeElementAt(i);
+        }
+    }
+
+    void spawnMobs() {
+        mobs.removeAllElements();
+        bright = dayBright();
+        for (int i = 0; i < 7; i++) spawnMob(0, false);
+        for (int i = 0; i < 6; i++) spawnMob(1, false);
+        for (int i = 0; i < 5; i++) spawnMob(2, false);
+        if (bright < 70) for (int i = 0; i < 3; i++) spawnMob(3 + rnd(2), false);
+    }
+
+    boolean spawnAt(int type, int x, int z) {
+        if (mobs.size() >= 40) return false;
+        if (chunkFor(x, z) == null) return false;
+        int top = topY(x, z);
+        if (top < 0 || top + 2 >= H) return false;
+        int tb = blockAt(x, top, z);
+        if (type < 3) { if (tb != B_GRASS) return false; }
+        else if (tb == 0 || tb == B_LEAVES || tb == B_SAPLING || tb == B_TORCH) return false;
+        if (blockAt(x, top + 1, z) != 0 || blockAt(x, top + 2, z) != 0) return false;
+        Mob m = new Mob();
+        m.type = type;
+        m.x = x + 0.5f; m.z = z + 0.5f; m.y = top + 1.001f;
+        m.ang = rndf() * 6.2832f;
+        m.hp = mobHp(type);
+        m.timer = 10 + rnd(40);
+        mobs.addElement(m);
+        return true;
+    }
+
+    void spawnMob(int type, boolean far) {
+        int bx = ifloor(px), bz = ifloor(pz);
+        for (int tries = 0; tries < 30; tries++) {
+            int x = bx - 8 + rnd(17), z = bz - 8 + rnd(17);
+            if (far) {
+                float dx = x + 0.5f - px, dz = z + 0.5f - pz;
+                if (dx * dx + dz * dz < 36f) continue;
+            }
+            if (spawnAt(type, x, z)) return;
+        }
+    }
+
+    // animales para un chunk recien generado (0 a 2)
+    void spawnInChunk(int cx, int cz) {
+        int n = rnd(3);
+        for (int i = 0; i < n; i++) {
+            for (int tries = 0; tries < 8; tries++) {
+                int x = (cx << 4) + rnd(CS), z = (cz << 4) + rnd(CS);
+                if (spawnAt(rnd(3), x, z)) break;
+            }
+        }
+    }
+
+    void resetPlayer() {
+        px = 0.5f; pz = 0.5f;
+        updateWindow(true);
+        loadMissing(nch);
+        int top = topY(0, 0);
+        py = top + 1.001f;
+        vy = 0; fallDist = 0; yaw = 0; pitch = 0; onGround = false;
+        clearKeys();
+    }
+
+    void clearKeys() {
+        for (int i = 0; i < kd.length; i++) kd[i] = false;
+        starTicks = 0; starConsumed = false; mineProg = 0; mineX = -1;
+    }
+
+    void resetPlayerState() {
+        for (int i = 0; i < 46; i++) { slId[i] = 0; slCnt[i] = 0; slDur[i] = 0; }
+        heldId = 0; heldCnt = 0; heldDur = 0;
+        sel = 0; health = 20; hunger = 20;
+        hungerTimer = 0; regenTimer = 0; starveTimer = 0; dmgFlash = 0;
+        layout = 0;
+        worldTime = 1000; bright = 100;
+        for (int i = 0; i < 3; i++) { fId[i] = 0; fCnt[i] = 0; }
+        fBurn = 0; fBurnMax = 0; fProg = 0;
+        sapN = 0; torchN = 0; hostTimer = 0;
+    }
+
+    // entra a un mundo (nuevo o guardado); se llama desde el hilo del juego con el lock tomado
+    void enterWorld(WorldInfo w) {
+        closeStore();
+        idx.clear();
+        pending.clear();
+        pendBytes = 0;
+        needFlush = false;
+        needSave = false;
+        storeBroken = false;
+        hdrRid = 0;
+        inWorld = false;
+        curWorld = w;
+        curStore = cat("mcw", w.id);
+        seed = w.seed;
+        for (int i = 0; i < nch; i++) { chCx[i] = NONE; chCz[i] = NONE; chDirty[i] = false; }
+        mobs.removeAllElements();
+        resetPlayerState();
+        boolean ok = readHeader();
+        if (!ok) {
+            wipeWorldStore();
+            resetPlayerState();
+            seed = w.seed;
+        }
+        inWorld = true;
+        boolean sane = ok && py >= 0f && py <= H + 10f && Math.abs(px) < 1000000f && Math.abs(pz) < 1000000f;
+        if (sane) {
+            updateWindow(true);
+            loadMissing(nch);
+            vy = 0; fallDist = 0; onGround = false;
+            clearKeys();
+            int g = 0;
+            while (g++ < H && boxCollides(px, py, pz, HW, 1.8f)) py += 1f;
+        } else {
+            resetPlayer();
+        }
+        spawnMobs();
+        if (!ok) writeHeader();
+        autoT = 0;
+        state = ST_PLAY;
+    }
+
+    // guarda y sale del mundo actual
+    void leaveWorld() {
+        if (inWorld) saveAll();
+        inWorld = false;
+        closeStore();
+        idx.clear();
+        pending.clear();
+        pendBytes = 0;
+        needFlush = false;
+        needSave = false;
+        for (int i = 0; i < nch; i++) { chCx[i] = NONE; chCz[i] = NONE; chDirty[i] = false; }
+        mobs.removeAllElements();
+        curWorld = null;
+    }
+
+    // aplica la distancia de renderizado elegida (reorganiza la ventana de chunks)
+    void applyRd() {
+        if (rdApplied == rdIdx) return;
+        rdApplied = rdIdx;
+        saveSettings();
+        for (int s = 0; s < nch; s++) unloadSlot(s);
+        setupWindow(RD_OPT[rdIdx]);
+        if (inWorld) {
+            updateWindow(true);
+            loadMissing(nch);
+            if (needFlush) flushPending();
+        }
+    }
+
+    // ---------------------------------------------------------------- lista de mundos y ajustes (RecordStore)
+    byte[] enc(WorldInfo w) {
+        try {
+            ByteArrayOutputStream bo = new ByteArrayOutputStream();
+            DataOutputStream o = new DataOutputStream(bo);
+            o.writeInt(w.id);
+            o.writeInt(w.seed);
+            o.writeUTF(w.name);
+            o.flush();
+            return bo.toByteArray();
+        } catch (Exception e) {
+            return new byte[0];
+        }
+    }
+
+    void loadWorldList() {
+        worlds.removeAllElements();
+        try { RecordStore.deleteRecordStore(OLD_STORE); } catch (Exception e) {}   // formato viejo, no se puede continuar
+        RecordStore r = null;
+        try {
+            r = RecordStore.openRecordStore(LIST_STORE, true);
+            RecordEnumeration en = r.enumerateRecords(null, null, false);
+            while (en.hasNextElement()) {
+                int rid = en.nextRecordId();
+                try {
+                    DataInputStream in = new DataInputStream(new ByteArrayInputStream(r.getRecord(rid)));
+                    WorldInfo w = new WorldInfo();
+                    w.rid = rid;
+                    w.id = in.readInt();
+                    w.seed = in.readInt();
+                    w.name = in.readUTF();
+                    int p = 0;
+                    while (p < worlds.size() && ((WorldInfo) worlds.elementAt(p)).id < w.id) p++;
+                    worlds.insertElementAt(w, p);
+                } catch (Exception e) {}
+            }
+            en.destroy();
+        } catch (Exception e) {}
+        if (r != null) { try { r.closeRecordStore(); } catch (Exception e) {} }
+    }
+
+    int nextId() {
+        int id = 1;
+        for (int i = 0; i < worlds.size(); i++) {
+            int v = ((WorldInfo) worlds.elementAt(i)).id;
+            if (v >= id) id = v + 1;
+        }
+        return id;
+    }
+
+    WorldInfo addWorld(String name, int sd) {
+        WorldInfo w = new WorldInfo();
+        w.id = nextId();
+        w.name = name;
+        w.seed = sd;
+        RecordStore r = null;
+        try {
+            r = RecordStore.openRecordStore(LIST_STORE, true);
+            byte[] b = enc(w);
+            w.rid = r.addRecord(b, 0, b.length);
+        } catch (Exception e) {}
+        if (r != null) { try { r.closeRecordStore(); } catch (Exception e) {} }
+        worlds.addElement(w);
+        return w;
+    }
+
+    void deleteWorld(WorldInfo w) {
+        try { RecordStore.deleteRecordStore(cat("mcw", w.id)); } catch (Exception e) {}
+        RecordStore r = null;
+        try {
+            r = RecordStore.openRecordStore(LIST_STORE, true);
+            r.deleteRecord(w.rid);
+        } catch (Exception e) {}
+        if (r != null) { try { r.closeRecordStore(); } catch (Exception e) {} }
+        worlds.removeElement(w);
+    }
+
+    void loadSettings() {
+        RecordStore r = null;
+        try {
+            r = RecordStore.openRecordStore(CFG_STORE, true);
+            if (r.getNumRecords() > 0) {
+                byte[] b = r.getRecord(1);
+                if (b.length > 0 && b[0] >= 0 && b[0] < RD_OPT.length) rdIdx = b[0];
+            }
+        } catch (Exception e) {}
+        if (r != null) { try { r.closeRecordStore(); } catch (Exception e) {} }
+        rdApplied = rdIdx;
+    }
+
+    void saveSettings() {
+        RecordStore r = null;
+        try {
+            r = RecordStore.openRecordStore(CFG_STORE, true);
+            byte[] b = new byte[] { (byte) rdIdx };
+            if (r.getNumRecords() > 0) r.setRecord(1, b, 0, 1);
+            else r.addRecord(b, 0, 1);
+        } catch (Exception e) {}
+        if (r != null) { try { r.closeRecordStore(); } catch (Exception e) {} }
+    }
+
+    // ---------------------------------------------------------------- navegacion de menus
+    boolean isMenu() {
+        return state == ST_MENU || state >= ST_PAUSE;
+    }
+
+    void buildNav() {
+        if (state == ST_MENU) navIds = new int[] { A_PLAY, A_QUIT };
+        else if (state == ST_PAUSE) navIds = new int[] { A_RESUME, A_SETTINGS, A_TOMENU };
+        else if (state == ST_SET) navIds = new int[] { A_RD, A_SETBACK };
+        else if (state == ST_CREATE) navIds = new int[] { A_CNAME, A_CSEED, A_CGO, A_CBACK };
+        else if (state == ST_CONFIRM) navIds = new int[] { A_YES, A_NO };
+        else if (state == ST_WORLDS) {
+            int n = worlds.size();
+            navIds = new int[n + 2];
+            navIds[0] = A_NEW;
+            for (int i = 0; i < n; i++) navIds[i + 1] = 100 + i;
+            navIds[n + 1] = A_WBACK;
+        } else navIds = new int[] { 0 };
+        navN = navIds.length;
+        navSel = 0;
+    }
+
+    void go(int st) {
+        state = st;
+        wScroll = 0;
+        buildNav();
+    }
+
+    void navMove(int d) {
+        if (navN <= 0) return;
+        navSel = (navSel + d + navN) % navN;
+        if (state == ST_WORLDS) {
+            int i = navSel - 1;
+            if (i >= 0 && i < worlds.size()) {
+                if (i < wScroll) wScroll = i;
+                if (i >= wScroll + wVis) wScroll = i - wVis + 1;
+            }
+        }
+    }
+
+    void openMain() {
+        go(ST_MENU);
+    }
+
+    void openWorlds() {
+        loadWorldList();
+        go(ST_WORLDS);
+        navSel = (worlds.size() > 0) ? 1 : 0;
+    }
+
+    void openCreate() {
+        cName = cat("Mundo ", nextId());
+        cSeedTxt = "";
+        go(ST_CREATE);
+        navSel = 2;
+    }
+
+    void openPause() {
+        clearKeys();
+        go(ST_PAUSE);
+        job = J_SAVE;
+    }
+
+    void closeSettings() {
+        go(ST_PAUSE);
+        navSel = 1;
+        if (rdIdx != rdApplied) job = J_APPLY;
+    }
+
+    void rdStep(int d) {
+        rdIdx = (rdIdx + d + RD_OPT.length) % RD_OPT.length;
+    }
+
+    void askDelete(int i) {
+        if (i < 0 || i >= worlds.size()) return;
+        delTarget = (WorldInfo) worlds.elementAt(i);
+        go(ST_CONFIRM);
+        navSel = 1;
+    }
+
+    void doCreate() {
+        int sd;
+        if (cSeedTxt.length() == 0) {
+            sd = rand.nextInt();
+        } else {
+            try { sd = Integer.parseInt(cSeedTxt); } catch (Exception e) { sd = cSeedTxt.hashCode(); }
+        }
+        jobWorld = addWorld(cName, sd);
+        job = J_ENTER;
+    }
+
+    // abre el editor de texto del sistema (nombre o semilla)
+    void editText(int which) {
+        editing = which;
+        TextBox tb = new TextBox(which == 1 ? "Nombre del mundo" : "Semilla (vacio = aleatoria)",
+                which == 1 ? cName : cSeedTxt, which == 1 ? 20 : 12, TextField.ANY);
+        tb.addCommand(cmdOk);
+        tb.addCommand(cmdCancel);
+        tb.setCommandListener(this);
+        disp.setCurrent(tb);
+    }
+
+    public void commandAction(Command c, Displayable d) {
+        synchronized (lock) {
+            if (c == cmdOk && d instanceof TextBox) {
+                String s = ((TextBox) d).getString().trim();
+                if (editing == 1) cName = (s.length() == 0) ? cat("Mundo ", nextId()) : s;
+                else cSeedTxt = s;
+            }
+        }
+        setFullScreenMode(true);
+        disp.setCurrent(this);
+    }
+
+    void activate(int id) {
+        if (id >= 200) { askDelete(id - 200); return; }
+        if (id >= 100) {
+            int i = id - 100;
+            if (i < worlds.size()) {
+                jobWorld = (WorldInfo) worlds.elementAt(i);
+                job = J_ENTER;
+            }
+            return;
+        }
+        switch (id) {
+            case A_PLAY: openWorlds(); break;
+            case A_QUIT: midlet.quit(); break;
+            case A_RESUME: state = ST_PLAY; clearKeys(); break;
+            case A_SETTINGS: go(ST_SET); break;
+            case A_TOMENU: job = J_LEAVE; break;
+            case A_RD: rdStep(1); break;
+            case A_SETBACK: closeSettings(); break;
+            case A_NEW: openCreate(); break;
+            case A_WBACK: openMain(); break;
+            case A_CNAME: editText(1); break;
+            case A_CSEED: editText(2); break;
+            case A_CGO: doCreate(); break;
+            case A_CBACK: openWorlds(); break;
+            case A_YES:
+                if (delTarget != null) deleteWorld(delTarget);
+                delTarget = null;
+                openWorlds();
+                break;
+            case A_NO: openWorlds(); break;
+            default: break;
+        }
+    }
+
+    void menuBack() {
+        if (state == ST_PAUSE) { state = ST_PLAY; clearKeys(); }
+        else if (state == ST_SET) closeSettings();
+        else if (state == ST_WORLDS) openMain();
+        else if (state == ST_CREATE || state == ST_CONFIRM) openWorlds();
+    }
+
+    void menuKey(int k) {
+        if (k == 2) navMove(-1);
+        else if (k == 8) navMove(1);
+        else if (k == 5) activate(navIds[navSel]);
+        else if (k == 4 || k == 6) {
+            if (navIds[navSel] == A_RD) rdStep(k == 6 ? 1 : -1);
+        } else if (k == 10 && state == ST_WORLDS) {
+            int id = navIds[navSel];
+            if (id >= 100 && id < 200) activate(id + 100);
+        } else if (k == 0 || k == 12 || k == 13) menuBack();
+    }
+
+    void respawn() {
+        resetPlayer();
+        health = 20; hunger = 20; dmgFlash = 0;
+        state = ST_PLAY;
+    }
+
+    // ---------------------------------------------------------------- teclas
+    int mapKey(int keyCode) {
+        if (keyCode >= KEY_NUM0 && keyCode <= KEY_NUM9) return keyCode - KEY_NUM0;
+        // L / R (teclas laterales o soft keys): 12 = L, 13 = R. Cualquiera de las dos abre el menu de pausa
+        if (keyCode == 'l' || keyCode == 'L' || keyCode == -6 || keyCode == -21) return 12;
+        if (keyCode == 'r' || keyCode == 'R' || keyCode == -7 || keyCode == -22) return 13;
+        if (keyCode == KEY_STAR) return 10;
+        if (keyCode == KEY_POUND) return 11;
+        try {
+            String kn = getKeyName(keyCode);
+            if (kn != null) {
+                kn = kn.toUpperCase();
+                if (kn.indexOf("SOFT") >= 0) return (kn.indexOf("RIGHT") >= 0 || kn.indexOf('2') >= 0) ? 13 : 12;
+            }
+        } catch (Exception e) {}
+        int a;
+        try { a = getGameAction(keyCode); } catch (Exception e) { return -1; }
+        if (a == UP) return 2;
+        if (a == DOWN) return 8;
+        if (a == LEFT) return 4;
+        if (a == RIGHT) return 6;
+        if (a == FIRE) return 5;
+        return -1;
+    }
+
+    protected void keyPressed(int keyCode) {
+        if (busy != null) return;
+        int k = mapKey(keyCode);
+        if (k < 0) return;
+        synchronized (lock) {
+            if (state == ST_PLAY) {
+                if (k == 12 || k == 13) { openPause(); return; }
+                kd[k] = true;
+                if (k == 0) openInv(2);
+                else if (k == 11) layout = 1 - layout;
+                else if (k == 1) { sel = (sel + 8) % 9; labelT = 40; }
+                else if (k == 3) { sel = (sel + 1) % 9; labelT = 40; }
+                else if (k == 10) { starTicks = 1; starConsumed = false; mineProg = 0; }
+            } else if (state == ST_DEAD) {
+                if (k == 5) respawn();
+            } else if (state == ST_INV) {
+                if (k == 0 || k == 12 || k == 13) closeInv();
+                else if (k == 2 || k == 4 || k == 6 || k == 8) moveCursor(k);
+                else if (k == 5) click(cursor);
+                else if (k == 10) clickSecondary(cursor);
+            } else {
+                menuKey(k);
+            }
+        }
+    }
+
+    protected void keyRepeated(int keyCode) {
+        if (busy != null) return;
+        int k = mapKey(keyCode);
+        if (k < 0) return;
+        synchronized (lock) {
+            if (state == ST_INV && (k == 2 || k == 4 || k == 6 || k == 8)) moveCursor(k);
+            else if (isMenu() && (k == 2 || k == 8)) menuKey(k);
+        }
+    }
+
+    protected void keyReleased(int keyCode) {
+        int k = mapKey(keyCode);
+        if (k < 0) return;
+        synchronized (lock) {
+            kd[k] = false;
+            if (k == 10) {
+                if (state == ST_PLAY && !starConsumed && starTicks > 0 && starTicks <= 6) doTap();
+                starTicks = 0; starConsumed = false; mineProg = 0; mineX = -1;
+            }
+        }
+    }
+
+    // tactil: tocar un boton lo activa, arrastrar desplaza la lista de mundos
+    protected void pointerPressed(int x, int y) {
+        if (busy != null) return;
+        synchronized (lock) {
+            tpDown = true;
+            tpDrag = false;
+            tpX = x;
+            tpY = y;
+            tpScroll0 = wScroll;
+        }
+    }
+
+    protected void pointerDragged(int x, int y) {
+        synchronized (lock) {
+            if (!tpDown) return;
+            if (Math.abs(y - tpY) > 8) tpDrag = true;
+            if (tpDrag && state == ST_WORLDS) {
+                int step = btnH + 3;
+                if (step < 4) step = 4;
+                wScroll = tpScroll0 + (tpY - y) / step;
+            }
+        }
+    }
+
+    protected void pointerReleased(int x, int y) {
+        if (busy != null) return;
+        synchronized (lock) {
+            if (!tpDown) return;
+            tpDown = false;
+            if (tpDrag || !isMenu()) return;
+            for (int i = 0; i < htN; i++) {
+                if (tpX >= htX[i] && tpX < htX[i] + htW[i] && tpY >= htY[i] && tpY < htY[i] + htH[i]) {
+                    for (int j = 0; j < navN; j++) if (navIds[j] == htId[i]) navSel = j;
+                    activate(htId[i]);
+                    return;
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- inventario
+    int addItem(int id, int cnt, int dur) {
+        int left = cnt;
+        if (maxStack(id) > 1) {
+            for (int i = 0; i < 36; i++) {
+                if (slId[i] == id && slCnt[i] < 64) {
+                    int mv = Math.min(64 - slCnt[i], left);
+                    slCnt[i] += mv;
+                    left -= mv;
+                    if (left <= 0) return 0;
+                }
+            }
+        }
+        for (int i = 0; i < 36; i++) {
+            if (slId[i] == 0) {
+                int put = (maxStack(id) > 1) ? Math.min(64, left) : 1;
+                slId[i] = id;
+                slCnt[i] = put;
+                slDur[i] = isTool(id) ? (dur > 0 ? dur : TOOL_DUR) : 0;
+                left -= put;
+                if (left <= 0) return 0;
+            }
+        }
+        return left;
+    }
+
+    void clearSlot(int i) {
+        slId[i] = 0; slCnt[i] = 0; slDur[i] = 0;
+    }
+
+    void openInv(int n) {
+        craftN = n;
+        state = ST_INV;
+        clearKeys();
+        cursor = sel;
+        if (n == FURN) syncToSlots();
+        layoutInv();
+        updateOutput();
+    }
+
+    void closeInv() {
+        if (craftN == FURN) {
+            syncFromSlots();
+            for (int i = 36; i < 45; i++) clearSlot(i);
+        }
+        for (int i = 36; i < 45; i++) {
+            if (slId[i] != 0) { addItem(slId[i], slCnt[i], slDur[i]); clearSlot(i); }
+        }
+        if (heldId != 0) { addItem(heldId, heldCnt, heldDur); heldId = 0; heldCnt = 0; heldDur = 0; }
+        clearSlot(OUT);
+        state = ST_PLAY;
+        clearKeys();
+    }
+
+    void layoutInv() {
+        int s = Math.min((sw - 8) / 9, (sh - 40) / 7);
+        if (s > 30) s = 30;
+        if (s < 10) s = 10;
+        slS = s;
+        int x0 = (sw - 9 * s) / 2;
+        int y0 = 14;
+        int ym = y0 + 3 * s + 8;
+        int yh = ym + 3 * s + 4;
+        for (int i = 0; i < 46; i++) slActive[i] = false;
+        for (int i = 0; i < 9; i++) {
+            slx[i] = x0 + i * s; sly[i] = yh; slActive[i] = true;
+        }
+        for (int i = 9; i < 36; i++) {
+            int r = (i - 9) / 9, c = (i - 9) % 9;
+            slx[i] = x0 + c * s; sly[i] = ym + r * s; slActive[i] = true;
+        }
+        int n = (craftN == FURN) ? 0 : craftN;
+        int oy = (n == 2) ? s / 2 : 0;
+        int gx0 = x0 + s + ((n == 2) ? s / 2 : 0);
+        for (int r = 0; r < n; r++) {
+            for (int c = 0; c < n; c++) {
+                int idx = 36 + r * n + c;
+                slx[idx] = gx0 + c * s; sly[idx] = y0 + oy + r * s; slActive[idx] = true;
+            }
+        }
+        slx[OUT] = x0 + 6 * s; sly[OUT] = y0 + s; slActive[OUT] = true;
+        if (craftN == FURN) {
+            for (int i = 36; i < 45; i++) slActive[i] = false;
+            slx[36] = x0 + 3 * s; sly[36] = y0;
+            slx[37] = x0 + 3 * s; sly[37] = y0 + 2 * s;
+            slx[38] = x0 + 6 * s; sly[38] = y0 + s;
+            slActive[36] = true; slActive[37] = true; slActive[38] = true;
+            slActive[OUT] = false;
+        }
+    }
+
+    void moveCursor(int k) {
+        int c = cursor, best = -1, bs = 0x7fffffff;
+        for (int j = 0; j < 46; j++) {
+            if (!slActive[j] || j == c) continue;
+            int dx = slx[j] - slx[c], dy = sly[j] - sly[c];
+            boolean ok;
+            if (k == 2) ok = dy < 0;
+            else if (k == 8) ok = dy > 0;
+            else if (k == 4) ok = dx < 0;
+            else ok = dx > 0;
+            if (!ok) continue;
+            int score;
+            if (k == 2 || k == 8) score = Math.abs(dy) + 3 * Math.abs(dx);
+            else score = Math.abs(dx) + 3 * Math.abs(dy);
+            if (score < bs) { bs = score; best = j; }
+        }
+        if (best >= 0) cursor = best;
+    }
+
+    int findRecipe() {
+        if (craftN == FURN) return -1;
+        int n = craftN;
+        int minr = n, maxr = -1, minc = n, maxc = -1;
+        for (int r = 0; r < n; r++) {
+            for (int c = 0; c < n; c++) {
+                if (slId[36 + r * n + c] != 0) {
+                    if (r < minr) minr = r;
+                    if (r > maxr) maxr = r;
+                    if (c < minc) minc = c;
+                    if (c > maxc) maxc = c;
+                }
+            }
+        }
+        if (maxr < 0) return -1;
+        int bw = maxc - minc + 1, bh = maxr - minr + 1;
+        for (int k = 0; k < nrec; k++) {
+            if (rw[k] != bw || rh[k] != bh) continue;
+            boolean ok = true, okm = true;
+            for (int r = 0; r < bh; r++) {
+                for (int c = 0; c < bw; c++) {
+                    int have = slId[36 + (minr + r) * n + minc + c];
+                    if (have != rPat[k][r * bw + c]) ok = false;
+                    if (have != rPat[k][r * bw + (bw - 1 - c)]) okm = false;
+                }
+            }
+            if (ok || okm) return k;
+        }
+        return -1;
+    }
+
+    void updateOutput() {
+        int k = findRecipe();
+        if (k < 0) { clearSlot(OUT); return; }
+        slId[OUT] = rOut[k];
+        slCnt[OUT] = rCnt[k];
+        slDur[OUT] = isTool(rOut[k]) ? TOOL_DUR : 0;
+    }
+
+    void consumeGrid() {
+        for (int i = 0; i < craftN * craftN; i++) {
+            int s = 36 + i;
+            if (slId[s] != 0) {
+                slCnt[s]--;
+                if (slCnt[s] <= 0) clearSlot(s);
+            }
+        }
+    }
+
+    void takeOutput() {
+        if (slId[OUT] == 0) return;
+        if (heldId == 0) {
+            heldId = slId[OUT]; heldCnt = slCnt[OUT]; heldDur = slDur[OUT];
+            consumeGrid();
+        } else if (heldId == slId[OUT] && maxStack(heldId) > 1 && heldCnt + slCnt[OUT] <= 64) {
+            heldCnt += slCnt[OUT];
+            consumeGrid();
+        }
+        updateOutput();
+    }
+
+    void click(int idx) {
+        if (craftN == FURN && idx == 38) { takeFurnaceOut(); return; }
+        if (idx == OUT) { takeOutput(); return; }
+        int id = slId[idx], cnt = slCnt[idx], dur = slDur[idx];
+        if (heldId == 0) {
+            if (id != 0) {
+                heldId = id; heldCnt = cnt; heldDur = dur;
+                clearSlot(idx);
+            }
+        } else if (id == 0) {
+            slId[idx] = heldId; slCnt[idx] = heldCnt; slDur[idx] = heldDur;
+            heldId = 0; heldCnt = 0; heldDur = 0;
+        } else if (id == heldId && maxStack(id) > 1) {
+            int mv = Math.min(64 - cnt, heldCnt);
+            slCnt[idx] += mv;
+            heldCnt -= mv;
+            if (heldCnt <= 0) { heldId = 0; heldCnt = 0; heldDur = 0; }
+        } else {
+            slId[idx] = heldId; slCnt[idx] = heldCnt; slDur[idx] = heldDur;
+            heldId = id; heldCnt = cnt; heldDur = dur;
+        }
+        if (idx >= 36) updateOutput();
+    }
+
+    void clickSecondary(int idx) {
+        if (craftN == FURN && idx == 38) { takeFurnaceOut(); return; }
+        if (idx == OUT) { takeOutput(); return; }
+        if (heldId == 0) {
+            if (slId[idx] != 0) {
+                int take = (slCnt[idx] + 1) / 2;
+                heldId = slId[idx]; heldCnt = take; heldDur = slDur[idx];
+                slCnt[idx] -= take;
+                if (slCnt[idx] <= 0) clearSlot(idx);
+            }
+        } else {
+            boolean empty = (slId[idx] == 0);
+            boolean same = (slId[idx] == heldId && slCnt[idx] < 64 && maxStack(heldId) > 1);
+            if (empty || same) {
+                if (empty) { slId[idx] = heldId; slDur[idx] = heldDur; slCnt[idx] = 0; }
+                slCnt[idx]++;
+                heldCnt--;
+                if (heldCnt <= 0) { heldId = 0; heldCnt = 0; heldDur = 0; }
+            }
+        }
+        if (idx >= 36) updateOutput();
+    }
+
+    // ---------------------------------------------------------------- logica
+    void update() {
+        synchronized (lock) {
+            tick++;
+            if (labelT > 0) labelT--;
+            if (dmgFlash > 0) dmgFlash--;
+            if (state == ST_INV && craftN == FURN) { syncFromSlots(); updateFurnace(); syncToSlots(); }
+            if (state != ST_PLAY) return;
+            worldTime++;
+            bright = dayBright();
+            if (bright < 100 && tick % 5 == 0) scanTorches();
+            updateFurnace();
+            updateSaplings();
+            if (++autoT >= 2400) { autoT = 0; needSave = true; }
+            updatePlayer();
+            updateWindow(false);
+            loadMissing(1);
+            updateMobs();
+            castRay();
+            updateAction();
+            updateSurvival();
+        }
+    }
+
+    void hurt(int n) {
+        if (n <= 0) return;
+        health -= n;
+        dmgFlash = 6;
+        if (health <= 0) {
+            health = 0;
+            state = ST_DEAD;
+            clearKeys();
+        }
+    }
+
+    void updatePlayer() {
+        boolean fw, bk, jp, up, down;
+        if (layout == 0) {
+            fw = kd[2]; bk = kd[8]; jp = kd[5]; up = kd[7]; down = kd[9];
+        } else {
+            fw = kd[5]; bk = kd[7]; jp = kd[9]; up = kd[2]; down = kd[8];
+        }
+        if (kd[4]) yaw -= LOOK;
+        if (kd[6]) yaw += LOOK;
+        if (up) pitch += LOOK;
+        if (down) pitch -= LOOK;
+        if (pitch > 1.4f) pitch = 1.4f;
+        if (pitch < -1.4f) pitch = -1.4f;
+
+        float sn = (float) Math.sin(yaw), cs = (float) Math.cos(yaw);
+        float mx = 0, mz = 0;
+        if (fw) { mx += sn * SPD; mz += cs * SPD; }
+        if (bk) { mx -= sn * SPD; mz -= cs * SPD; }
+        moving = (fw || bk);
+
+        boolean blockedX = mx != 0 && boxCollides(px + mx, py, pz, HW, 1.8f);
+        boolean blockedZ = mz != 0 && boxCollides(px, py, pz + mz, HW, 1.8f);
+        if (mx != 0 && !blockedX) px += mx;
+        if (mz != 0 && !blockedZ) pz += mz;
+        boolean autoJump = false;
+        if (onGround && (blockedX || blockedZ)) {
+            float ax2 = blockedX ? px + mx : px, az2 = blockedZ ? pz + mz : pz;
+            if (!boxCollides(px, py + 1.0f, pz, HW, 1.8f) && !boxCollides(ax2, py + 1.0f, az2, HW, 1.8f)) autoJump = true;
+        }
+
+        float oldY = py;
+        if ((jp || autoJump) && onGround) vy = JUMP;
+        vy = (vy - GRAV) * 0.98f;
+        float ny = py + vy;
+        onGround = false;
+        if (boxCollides(px, ny, pz, HW, 1.8f)) {
+            if (vy < 0) {
+                float sp = ifloor(ny) + 1.001f;
+                if (!boxCollides(px, sp, pz, HW, 1.8f)) py = sp;
+                onGround = true;
+                if (fallDist > 3f) hurt((int) Math.ceil(fallDist - 3f));
+                fallDist = 0;
+            } else {
+                float sp = ifloor(ny + 1.8f) - 1.8f - 0.001f;
+                if (!boxCollides(px, sp, pz, HW, 1.8f)) py = sp;
+            }
+            vy = 0;
+        } else {
+            py = ny;
+            if (vy < 0) fallDist += oldY - py;
+            else fallDist = 0;
+        }
+    }
+
+    void updateMobs() {
+        for (int i = mobs.size() - 1; i >= 0; i--) {
+            Mob m = (Mob) mobs.elementAt(i);
+            updateMob(m);
+            if (m.type >= 3 && bright >= 90 && m.hp > 0 && (tick % 20) == 0) { m.hp--; m.hurt = 6; }
+            if (m.hp <= 0) mobs.removeElementAt(i);
+        }
+        if (++spawnTimer >= 400) {
+            spawnTimer = 0;
+            if (countMobs(false) < 10) spawnMob(rnd(3), true);
+        }
+        if (bright < 70 && ++hostTimer >= 100) {
+            hostTimer = 0;
+            if (countMobs(true) < 6) spawnMob(3 + rnd(2), true);
+        }
+    }
+
+    int countMobs(boolean hostile) {
+        int n = 0;
+        for (int i = 0; i < mobs.size(); i++) {
+            Mob m = (Mob) mobs.elementAt(i);
+            if ((m.type >= 3) == hostile) n++;
+        }
+        return n;
+    }
+
+    void updateMob(Mob m) {
+        float hw = mobHW(m.type);
+        float mh = mobH(m.type);
+        if (m.hurt > 0) m.hurt--;
+        if (m.flee > 0) m.flee--;
+        boolean chase = (m.type >= 3) && m.flee <= 0 && hostileAI(m);
+        if (!chase && --m.timer <= 0) {
+            if (rnd(3) == 0) { m.moving = false; m.timer = 20 + rnd(40); }
+            else { m.moving = true; m.ang = rndf() * 6.2832f; m.timer = 20 + rnd(60); }
+        }
+        if (m.moving || m.flee > 0) {
+            float sp = (m.flee > 0) ? 0.10f : mobSpeed(m.type);
+            float mx = (float) Math.sin(m.ang) * sp, mz = (float) Math.cos(m.ang) * sp;
+            boolean blocked = false;
+            if (!boxCollides(m.x + mx, m.y, m.z, hw, mh)) m.x += mx; else blocked = true;
+            if (!boxCollides(m.x, m.y, m.z + mz, hw, mh)) m.z += mz; else blocked = true;
+            if (blocked) {
+                if (m.ground) m.vy = JUMP;
+                if (m.flee <= 0 && rnd(4) == 0) m.ang = rndf() * 6.2832f;
+            }
+        }
+        m.vy = (m.vy - GRAV) * 0.98f;
+        float ny = m.y + m.vy;
+        m.ground = false;
+        if (boxCollides(m.x, ny, m.z, hw, mh)) {
+            if (m.vy < 0) {
+                float sp = ifloor(ny) + 1.001f;
+                if (!boxCollides(m.x, sp, m.z, hw, mh)) m.y = sp;
+                m.ground = true;
+            }
+            m.vy = 0;
+        } else {
+            m.y = ny;
+        }
+    }
+
+    void castRay() {
+        float sy = (float) Math.sin(yaw), cy = (float) Math.cos(yaw);
+        float sp = (float) Math.sin(pitch), cp = (float) Math.cos(pitch);
+        float dx = sy * cp, dy = sp, dz = cy * cp;
+        float ex = px, ey = py + EYE, ez = pz;
+        tx = -1; ty = -1; tz = -1; ax = -1; ay = -1; az = -1;
+        float tDist = 99f;
+        int lx = ifloor(ex), ly = ifloor(ey), lz = ifloor(ez);
+        float d = 0.05f;
+        while (d < REACH) {
+            int ix = ifloor(ex + dx * d), iy = ifloor(ey + dy * d), iz = ifloor(ez + dz * d);
+            if (ix != lx || iy != ly || iz != lz) {
+                if (blockAt(ix, iy, iz) != 0) {
+                    tx = ix; ty = iy; tz = iz;
+                    ax = lx; ay = ly; az = lz;
+                    tDist = d;
+                    break;
+                }
+                lx = ix; ly = iy; lz = iz;
+            }
+            d += 0.04f;
+        }
+        tMob = null;
+        float best = MOB_REACH;
+        if (tDist < best) best = tDist;
+        for (int i = 0; i < mobs.size(); i++) {
+            Mob m = (Mob) mobs.elementAt(i);
+            float r = mobR(m.type);
+            float h = mobH(m.type);
+            float cx = m.x - ex, cyy = m.y + h * 0.5f - ey, czz = m.z - ez;
+            float t = cx * dx + cyy * dy + czz * dz;
+            if (t < 0.2f || t > best) continue;
+            float d2 = cx * cx + cyy * cyy + czz * czz - t * t;
+            if (d2 < r * r) { best = t; tMob = m; }
+        }
+    }
+
+    int breakTicks(int b, int tool) {
+        float secs = hard[b] * 1.5f;
+        boolean right = false;
+        if (b == B_STONE || b == B_COBBLE || b == B_FURNACE) {
+            right = (tool == I_PICK);
+            if (!right) secs = hard[b] * 5f;
+        } else if (b == B_LOG || b == B_PLANKS || b == B_TABLE) {
+            right = (tool == I_AXE);
+        } else if (b == B_GRASS || b == B_DIRT) {
+            right = (tool == I_SHOVEL);
+        }
+        if (right) secs = secs / 2f;
+        return (int) (secs * 20f) + 1;
+    }
+
+    void damageTool(int amount) {
+        if (isTool(slId[sel])) {
+            slDur[sel] -= amount;
+            if (slDur[sel] <= 0) clearSlot(sel);
+        }
+    }
+
+    void breakBlock(int x, int y, int z) {
+        int b = blockAt(x, y, z);
+        boolean pick = (slId[sel] == I_PICK);
+        int drop = b;
+        if (b == B_GRASS) drop = B_DIRT;
+        else if (b == B_STONE || b == B_COBBLE) drop = pick ? B_COBBLE : 0;
+        else if (b == B_LEAVES) drop = 0;
+        setBlock(x, y, z, 0);
+        if (drop != 0) addItem(drop, 1, 0);
+        if (b == B_LEAVES && rnd(8) == 0) addItem(I_APPLE, 1, 0);
+        if (b == B_LEAVES && rnd(6) == 0) addItem(B_SAPLING, 1, 0);
+        damageTool(1);
+    }
+
+    void attackMob(Mob m) {
+        int t = slId[sel];
+        int dmg = 1;
+        if (t == I_SWORD) dmg = 4;
+        else if (t == I_AXE) dmg = 3;
+        else if (t == I_PICK || t == I_SHOVEL) dmg = 2;
+        m.hp -= dmg;
+        m.hurt = 8;
+        if (m.type < 3) {
+            m.flee = 60;
+            m.moving = true;
+            m.ang = yaw + (rndf() - 0.5f) * 1.2f;
+        }
+        m.vy = 0.25f;
+        float kx = (float) Math.sin(yaw) * 0.4f, kz = (float) Math.cos(yaw) * 0.4f;
+        float hw = mobHW(m.type);
+        float mh = mobH(m.type);
+        if (!boxCollides(m.x + kx, m.y, m.z + kz, hw, mh)) { m.x += kx; m.z += kz; }
+        damageTool(isTool(t) ? (t == I_SWORD ? 1 : 2) : 0);
+        if (m.hp <= 0) {
+            if (m.type == 0) {
+                addItem(I_WOOL, 1, 0);
+                addItem(I_MUTTON, 1 + rnd(2), 0);
+            } else if (m.type == 1) {
+                addItem(I_CHICKEN, 1, 0);
+                int f = rnd(3);
+                if (f > 0) addItem(I_FEATHER, f, 0);
+            } else if (m.type == 2) {
+                addItem(I_BEEF, 1 + rnd(3), 0);
+            } else if (m.type == 3) {
+                int f = rnd(3);
+                if (f > 0) addItem(I_ROTTEN, f, 0);
+            } else {
+                int f = rnd(3);
+                if (f > 0) addItem(I_GUNPOWDER, f, 0);
+            }
+            mobs.removeElement(m);
+            tMob = null;
+        }
+    }
+
+    void updateAction() {
+        if (attackCd > 0) attackCd--;
+        if (!kd[10]) return;
+        starTicks++;
+        if (tMob != null) {
+            mineProg = 0;
+            if (attackCd <= 0) {
+                attackMob(tMob);
+                attackCd = 8;
+                starConsumed = true;
+            }
+        } else if (tx >= 0) {
+            if (tx != mineX || ty != mineY || tz != mineZ) {
+                mineX = tx; mineY = ty; mineZ = tz; mineProg = 0;
+            }
+            mineProg++;
+            hungerTimer++;
+            int need = breakTicks(blockAt(tx, ty, tz), slId[sel]);
+            if (mineProg >= need) {
+                breakBlock(tx, ty, tz);
+                mineProg = 0;
+                mineX = -1;
+                starConsumed = true;
+            }
+        } else {
+            mineProg = 0;
+            mineX = -1;
+        }
+    }
+
+    void consumeSel() {
+        slCnt[sel]--;
+        if (slCnt[sel] <= 0) clearSlot(sel);
+    }
+
+    void doTap() {
+        int id = slId[sel];
+        if (tx >= 0 && blockAt(tx, ty, tz) == B_TABLE) { openInv(3); return; }
+        if (tx >= 0 && blockAt(tx, ty, tz) == B_FURNACE) { openInv(FURN); return; }
+        if (isFood(id)) {
+            if (hunger < 20) {
+                hunger = Math.min(20, hunger + foodVal(id));
+                consumeSel();
+            }
+            return;
+        }
+        if (isBlockItem(id) && tx >= 0) placeBlock(id);
+    }
+
+    void placeBlock(int id) {
+        if (ay < 0 || ay >= H) return;
+        if (blockAt(ax, ay, az) != 0) return;
+        if (px + HW > ax && px - HW < ax + 1 && pz + HW > az && pz - HW < az + 1
+                && py + 1.8f > ay && py < ay + 1) return;
+        if (id == B_SAPLING) {
+            int below = blockAt(ax, ay - 1, az);
+            if (below != B_GRASS && below != B_DIRT) return;
+        }
+        setBlock(ax, ay, az, id);
+        if (id == B_SAPLING) addSapling(ax, ay, az);
+        consumeSel();
+    }
+
+    void updateSurvival() {
+        hungerTimer++;
+        if (moving && onGround) hungerTimer++;
+        if (hungerTimer >= 900) {
+            hungerTimer = 0;
+            if (hunger > 0) hunger--;
+        }
+        if (hunger >= 18 && health < 20) {
+            if (++regenTimer >= 80) { regenTimer = 0; health++; hungerTimer += 120; }
+        } else {
+            regenTimer = 0;
+        }
+        if (hunger == 0) {
+            if (++starveTimer >= 80) { starveTimer = 0; if (health > 1) hurt(1); }
+        } else {
+            starveTimer = 0;
+        }
+    }
+
+    // ---------------------------------------------------------------- horno
+    int smeltResult(int id) {
+        if (id == B_LOG) return I_COAL;              // troncos -> carbon vegetal
+        if (id == B_COBBLE) return B_STONE;          // adoquin -> piedra
+        if (id == I_MUTTON) return I_COOKED_MUTTON;
+        if (id == I_CHICKEN) return I_COOKED_CHICKEN;
+        if (id == I_BEEF) return I_STEAK;
+        return 0;
+    }
+
+    int fuelTime(int id) {
+        if (id == I_COAL) return 1600;
+        if (id == B_LOG || id == B_PLANKS || id == B_TABLE) return 300;
+        if (id == I_STICK || id == B_SAPLING) return 100;
+        return 0;
+    }
+
+    void updateFurnace() {
+        int res = smeltResult(fId[0]);
+        boolean can = res != 0 && fCnt[0] > 0 && (fId[2] == 0 || (fId[2] == res && fCnt[2] < 64));
+        if (fBurn <= 0 && can && fId[1] != 0 && fuelTime(fId[1]) > 0) {
+            fBurn = fuelTime(fId[1]);
+            fBurnMax = fBurn;
+            fCnt[1]--;
+            if (fCnt[1] <= 0) { fId[1] = 0; fCnt[1] = 0; }
+        }
+        if (fBurn > 0) {
+            fBurn--;
+            if (can) {
+                if (++fProg >= SMELT_T) {
+                    fProg = 0;
+                    if (fId[2] == 0) { fId[2] = res; fCnt[2] = 1; } else fCnt[2]++;
+                    fCnt[0]--;
+                    if (fCnt[0] <= 0) { fId[0] = 0; fCnt[0] = 0; }
+                }
+            } else {
+                fProg = 0;
+            }
+        } else {
+            fProg = 0;
+        }
+    }
+
+    void syncToSlots() {
+        for (int i = 0; i < 3; i++) { slId[36 + i] = fId[i]; slCnt[36 + i] = fCnt[i]; slDur[36 + i] = 0; }
+    }
+
+    void syncFromSlots() {
+        for (int i = 0; i < 3; i++) { fId[i] = slId[36 + i]; fCnt[i] = slCnt[36 + i]; }
+    }
+
+    void takeFurnaceOut() {
+        if (slId[38] == 0) return;
+        if (heldId == 0) {
+            heldId = slId[38]; heldCnt = slCnt[38]; heldDur = 0;
+            clearSlot(38);
+        } else if (heldId == slId[38] && heldCnt + slCnt[38] <= 64) {
+            heldCnt += slCnt[38];
+            clearSlot(38);
+        }
+    }
+
+    // ---------------------------------------------------------------- brotes (saplings): crecen a los 5 ticks
+    void addSapling(int x, int y, int z) {
+        if (sapN >= 32) return;
+        sapX[sapN] = x; sapY[sapN] = y; sapZ[sapN] = z; sapT[sapN] = 5;
+        sapN++;
+    }
+
+    void updateSaplings() {
+        for (int i = sapN - 1; i >= 0; i--) {
+            if (--sapT[i] > 0) continue;
+            int x = sapX[i], y = sapY[i], z = sapZ[i];
+            sapN--;
+            sapX[i] = sapX[sapN]; sapY[i] = sapY[sapN]; sapZ[i] = sapZ[sapN]; sapT[i] = sapT[sapN];
+            if (blockAt(x, y, z) == B_SAPLING) growTree(x, y, z);
+        }
+    }
+
+    void growTree(int x, int y, int z) {
+        int top = y - 1;
+        int th = 4 + rnd(2);
+        if (y + th >= H) return;
+        for (int dy = 0; dy <= th; dy++) {
+            int b = blockAt(x, y + dy, z);
+            if (b != 0 && b != B_SAPLING && b != B_LEAVES) return;
+        }
+        for (int dy = 1; dy <= th; dy++) setBlock(x, top + dy, z, B_LOG);
+        for (int dy = th - 2; dy <= th + 1; dy++) {
+            int r = (dy <= th - 1) ? 2 : 1;
+            for (int dx = -r; dx <= r; dx++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    if (r == 2 && Math.abs(dx) == 2 && Math.abs(dz) == 2 && rnd(2) == 0) continue;
+                    if (dy == th + 1 && Math.abs(dx) + Math.abs(dz) > 1) continue;
+                    if (dx == 0 && dz == 0 && dy <= th) continue;
+                    if (blockAt(x + dx, top + dy, z + dz) == 0) setBlock(x + dx, top + dy, z + dz, B_LEAVES);
+                }
+            }
+        }
+        int g = 0;
+        while (g++ < H && boxCollides(px, py, pz, HW, 1.8f)) py += 1f;
+    }
+
+    // ---------------------------------------------------------------- dia / noche
+    int dayBright() {
+        int tt = worldTime % DAY_LEN;
+        if (tt < 12000) return 100;
+        if (tt < 13800) return 100 - (tt - 12000) * 65 / 1800;
+        if (tt < 22200) return 35;
+        return 35 + (tt - 22200) * 65 / 1800;
+    }
+
+    static int mix(int a, int b, int p) {
+        int r = (((a >> 16) & 255) * p + ((b >> 16) & 255) * (100 - p)) / 100;
+        int g = (((a >> 8) & 255) * p + ((b >> 8) & 255) * (100 - p)) / 100;
+        int bl = ((a & 255) * p + (b & 255) * (100 - p)) / 100;
+        return (r << 16) | (g << 8) | bl;
+    }
+
+    int skyColor() {
+        int p = (bright - 35) * 100 / 65;
+        if (p < 0) p = 0;
+        if (p > 100) p = 100;
+        return mix(0x87CEEB, 0x05081C, p);
+    }
+
+    void scanTorches() {
+        torchN = 0;
+        int bx = ifloor(px), bz = ifloor(pz);
+        for (int x = bx - 14; x <= bx + 14 && torchN < 16; x++) {
+            for (int z = bz - 14; z <= bz + 14 && torchN < 16; z++) {
+                byte[] cd = chunkFor(x, z);
+                if (cd == null) continue;
+                int base = (((x & 15) << 4) + (z & 15)) * H;
+                for (int y = 0; y < H && torchN < 16; y++) {
+                    if (cd[base + y] == B_TORCH) {
+                        torchX[torchN] = x + 0.5f; torchY[torchN] = y + 0.5f; torchZ[torchN] = z + 0.5f;
+                        torchN++;
+                    }
+                }
+            }
+        }
+    }
+
+    // brillo (0-100) en un punto: luz del dia o la de la antorcha mas cercana
+    int litPct(float x, float y, float z) {
+        int p = bright;
+        if (p >= 100) return 100;
+        for (int i = 0; i < torchN; i++) {
+            float dx = x - torchX[i], dy = y - torchY[i], dz = z - torchZ[i];
+            float d2 = dx * dx + dy * dy + dz * dz;
+            if (d2 < 64f) {
+                int tp = 100 - (int) (d2 * 1.5f);
+                if (tp > p) p = tp;
+            }
+        }
+        return p;
+    }
+
+    // ---------------------------------------------------------------- mobs: datos e IA hostil
+    float mobHW(int t) { return t == 0 ? 0.35f : (t == 1 ? 0.2f : (t == 2 ? 0.4f : 0.3f)); }
+    float mobH(int t) { return t == 0 ? 1.0f : (t == 1 ? 0.7f : (t == 2 ? 1.25f : (t == 3 ? 1.8f : 1.6f))); }
+    float mobR(int t) { return t == 0 ? 0.5f : (t == 1 ? 0.3f : (t == 2 ? 0.55f : (t == 3 ? 0.45f : 0.4f))); }
+    float mobSpeed(int t) { return t == 3 ? 0.07f : (t == 4 ? 0.06f : 0.035f); }
+    int mobHp(int t) { return t == 0 ? 8 : (t == 1 ? 4 : (t == 2 ? 10 : (t == 3 ? 12 : 10))); }
+
+    float[][] mobParts(int t) {
+        if (t == 0) return sheepParts;
+        if (t == 1) return chickenParts;
+        if (t == 2) return cowParts;
+        if (t == 3) return zombieParts;
+        return creeperParts;
+    }
+
+    // atan2 aproximado (CLDC 1.1 no trae atan): devuelve el angulo cuyo seno ~ y y coseno ~ x
+    float atan2f(float y, float x) {
+        float ax = Math.abs(x), ay = Math.abs(y);
+        if (ax < 0.0001f && ay < 0.0001f) return 0f;
+        float a;
+        if (ay <= ax) {
+            float z = ay / ax;
+            a = z / (1f + 0.28f * z * z);
+        } else {
+            float z = ax / ay;
+            a = 1.5708f - z / (1f + 0.28f * z * z);
+        }
+        if (x < 0f) a = 3.14159f - a;
+        if (y < 0f) a = -a;
+        return a;
+    }
+
+    // concatenar sin StringBuilder (CLDC solo trae StringBuffer)
+    static String cat(String a, String b) { return new StringBuffer(a).append(b).toString(); }
+    static String cat(String a, int n) { return new StringBuffer(a).append(n).toString(); }
+
+    // true si el mob hostil persigue al jugador (fija ang y moving)
+    boolean hostileAI(Mob m) {
+        if (m.atk > 0) m.atk--;
+        float dx = px - m.x, dz = pz - m.z;
+        float d2 = dx * dx + dz * dz;
+        float dy = (py + 0.9f) - (m.y + mobH(m.type) * 0.5f);
+        float lim = (m.type == 3) ? 256f : 144f;
+        if (d2 > lim) { m.fuse = 0; return false; }
+        m.ang = atan2f(dx, dz);
+        m.moving = true;
+        if (m.type == 3) {
+            if (d2 < 1.44f) {
+                m.moving = false;
+                if (m.atk <= 0 && dy < 1.6f && dy > -1.6f) { hurt(3); m.atk = 20; }
+            }
+        } else {
+            if (d2 < 6.25f) {
+                m.moving = false;
+                if (++m.fuse >= 30) explode(m);
+            } else if (m.fuse > 0) {
+                m.fuse--;
+            }
+        }
+        return true;
+    }
+
+    void explode(Mob m) {
+        int cx = ifloor(m.x), cy = ifloor(m.y + 0.8f), cz = ifloor(m.z);
+        for (int dx = -3; dx <= 3; dx++) {
+            for (int dy = -3; dy <= 3; dy++) {
+                for (int dz = -3; dz <= 3; dz++) {
+                    if (dx * dx + dy * dy + dz * dz > 10) continue;
+                    if (cy + dy <= 0) continue;
+                    if (blockAt(cx + dx, cy + dy, cz + dz) != 0) setBlock(cx + dx, cy + dy, cz + dz, 0);
+                }
+            }
+        }
+        float ddx = px - m.x, ddy = (py + 0.9f) - (m.y + 0.8f), ddz = pz - m.z;
+        float d = (float) Math.sqrt((double) (ddx * ddx + ddy * ddy + ddz * ddz));
+        if (d < 6f) hurt((int) ((6f - d) * 1.8f));
+        m.hp = -999;
+    }
+
+    // ---------------------------------------------------------------- render 3D
+    void toCam(float x, float y, float z, float[] o, int i) {
+        float dx = x - camX, dy = y - camY, dz = z - camZ;
+        float rx = dx * cosY - dz * sinY;
+        float rz = dx * sinY + dz * cosY;
+        o[i] = rx;
+        o[i + 1] = dy * cosP - rz * sinP;
+        o[i + 2] = dy * sinP + rz * cosP;
+    }
+
+    int clip(float[] in, int n, float[] out) {
+        int m = 0;
+        for (int i = 0; i < n; i++) {
+            int j = (i + 1) % n;
+            float az = in[i * 3 + 2], bz = in[j * 3 + 2];
+            boolean ain = az >= NEAR, bin = bz >= NEAR;
+            if (ain) {
+                out[m * 3] = in[i * 3]; out[m * 3 + 1] = in[i * 3 + 1]; out[m * 3 + 2] = az;
+                m++;
+            }
+            if (ain != bin) {
+                float t = (NEAR - az) / (bz - az);
+                out[m * 3] = in[i * 3] + (in[j * 3] - in[i * 3]) * t;
+                out[m * 3 + 1] = in[i * 3 + 1] + (in[j * 3 + 1] - in[i * 3 + 1]) * t;
+                out[m * 3 + 2] = NEAR;
+                m++;
+            }
+        }
+        return m;
+    }
+
+    void fillPoly(float[] v, int n, int color) {
+        int m = n;
+        float[] p = v;
+        boolean behind = false;
+        for (int i = 0; i < n; i++) {
+            if (v[i * 3 + 2] < NEAR) { behind = true; break; }
+        }
+        if (behind) {
+            m = clip(v, n, clipA);
+            if (m < 3) return;
+            p = clipA;
+        }
+        int minx = 100000, maxx = -100000, miny = 100000, maxy = -100000;
+        for (int i = 0; i < m; i++) {
+            float iz = 1f / p[i * 3 + 2];
+            int sx = (int) (halfW + p[i * 3] * iz * focal);
+            int sy = (int) (halfH - p[i * 3 + 1] * iz * focal);
+            if (sx < -3000) sx = -3000;
+            if (sx > 3000) sx = 3000;
+            if (sy < -3000) sy = -3000;
+            if (sy > 3000) sy = 3000;
+            sxs[i] = sx; sys[i] = sy;
+            if (sx < minx) minx = sx;
+            if (sx > maxx) maxx = sx;
+            if (sy < miny) miny = sy;
+            if (sy > maxy) maxy = sy;
+        }
+        if (maxx < 0 || minx > sw || maxy < 0 || miny > sh) return;
+        gg.setColor(color);
+        for (int k = 1; k < m - 1; k++) {
+            gg.fillTriangle(sxs[0], sys[0], sxs[k], sys[k], sxs[k + 1], sys[k + 1]);
+        }
+        if (p[2] < 14f) {
+            gg.setColor(shade(color, 72));
+            for (int i = 0; i < m; i++) {
+                int j = (i + 1) % m;
+                gg.drawLine(sxs[i], sys[i], sxs[j], sys[j]);
+            }
+        }
+    }
+
+    boolean opaque(int b) { return b != 0 && b != B_SAPLING && b != B_TORCH; }
+
+    void faceBlock(int x, int y, int z, int f, int color) {
+        for (int i = 0; i < 4; i++) {
+            int c = FACE[f][i];
+            toCam(x + (c & 1), y + ((c >> 1) & 1), z + ((c >> 2) & 1), quad, i * 3);
+        }
+        int p = litPct(x + 0.5f + NX[f], y + 0.5f + NY[f], z + 0.5f + NZ[f]);
+        fillPoly(quad, 4, p >= 100 ? color : shade(color, p));
+    }
+
+    void drawBox(float x0, float y0, float z0, float x1, float y1, float z1, int base, int lp) {
+        for (int f = 0; f < 6; f++) {
+            boolean vis;
+            if (f == 0) vis = camX > x1;
+            else if (f == 1) vis = camX < x0;
+            else if (f == 2) vis = camY > y1;
+            else if (f == 3) vis = camY < y0;
+            else if (f == 4) vis = camZ > z1;
+            else vis = camZ < z0;
+            if (!vis) continue;
+            for (int i = 0; i < 4; i++) {
+                int c = FACE[f][i];
+                toCam(((c & 1) == 0) ? x0 : x1, (((c >> 1) & 1) == 0) ? y0 : y1,
+                        (((c >> 2) & 1) == 0) ? z0 : z1, quad, i * 3);
+            }
+            fillPoly(quad, 4, shade(base, FSH[f] * lp / 100));
+        }
+    }
+
+    // plantita y antorcha: cajas finas, no cubos
+    void drawSmall(int x, int y, int z, int b) {
+        int lp = litPct(x + 0.5f, y + 0.5f, z + 0.5f);
+        float cx = x + 0.5f, cz = z + 0.5f;
+        if (b == B_TORCH) {
+            drawBox(cx - 0.07f, y, cz - 0.07f, cx + 0.07f, y + 0.55f, cz + 0.07f, 0x8B6B3A, lp);
+            drawBox(cx - 0.09f, y + 0.55f, cz - 0.09f, cx + 0.09f, y + 0.75f, cz + 0.09f, 0xFFD040, 100);
+        } else {
+            drawBox(cx - 0.05f, y, cz - 0.05f, cx + 0.05f, y + 0.4f, cz + 0.05f, 0x6B4A2A, lp);
+            drawBox(cx - 0.3f, y + 0.3f, cz - 0.3f, cx + 0.3f, y + 0.8f, cz + 0.3f, 0x3FA03A, lp);
+        }
+    }
+
+    void drawBlock(int x, int y, int z, int b) {
+        if (b == B_SAPLING || b == B_TORCH) { drawSmall(x, y, z, b); return; }
+        int[] sc = shadedCol[b];
+        if (camX > x + 1 && !opaque(blockAt(x + 1, y, z))) faceBlock(x, y, z, 0, sc[0]);
+        if (camX < x && !opaque(blockAt(x - 1, y, z))) faceBlock(x, y, z, 1, sc[1]);
+        if (camY > y + 1 && !opaque(blockAt(x, y + 1, z))) faceBlock(x, y, z, 2, sc[2]);
+        if (camY < y && !opaque(blockAt(x, y - 1, z))) faceBlock(x, y, z, 3, sc[3]);
+        if (camZ > z + 1 && !opaque(blockAt(x, y, z + 1))) faceBlock(x, y, z, 4, sc[4]);
+        if (camZ < z && !opaque(blockAt(x, y, z - 1))) faceBlock(x, y, z, 5, sc[5]);
+    }
+
+    void drawMob(Mob m) {
+        float[][] parts = mobParts(m.type);
+        int mpct = litPct(m.x, m.y + 0.6f, m.z);
+        float cs = (float) Math.cos(m.ang), sn = (float) Math.sin(m.ang);
+        for (int pi = 0; pi < parts.length; pi++) {
+            float[] p = parts[pi];
+            float cx = m.x + p[0] * cs + p[2] * sn;
+            float cz = m.z - p[0] * sn + p[2] * cs;
+            float cy = m.y + p[1];
+            for (int c = 0; c < 8; c++) {
+                float lx = ((c & 1) == 0) ? -p[3] : p[3];
+                float ly = ((c & 2) == 0) ? -p[4] : p[4];
+                float lz = ((c & 4) == 0) ? -p[5] : p[5];
+                toCam(cx + lx * cs + lz * sn, cy + ly, cz - lx * sn + lz * cs, cc, c * 3);
+            }
+            int base = (int) p[6];
+            if (m.hurt > 0) base = 0xFF5555;
+            else if (m.fuse > 0 && (m.fuse / 3) % 2 == 0) base = 0xFFFFFF;
+            for (int f = 0; f < 6; f++) {
+                float lcx = NX[f] * p[3], lcy = NY[f] * p[4], lcz = NZ[f] * p[5];
+                float fx2 = cx + lcx * cs + lcz * sn;
+                float fz2 = cz - lcx * sn + lcz * cs;
+                float fy2 = cy + lcy;
+                float nwx = NX[f] * cs + NZ[f] * sn;
+                float nwz = -NX[f] * sn + NZ[f] * cs;
+                float nwy = NY[f];
+                if (nwx * (camX - fx2) + nwy * (camY - fy2) + nwz * (camZ - fz2) <= 0f) continue;
+                for (int i = 0; i < 4; i++) {
+                    int ci = FACE[f][i] * 3;
+                    quad[i * 3] = cc[ci]; quad[i * 3 + 1] = cc[ci + 1]; quad[i * 3 + 2] = cc[ci + 2];
+                }
+                fillPoly(quad, 4, shade(base, FSH[f] * mpct / 100));
+            }
+        }
+    }
+
+    void line3(float[] v, int i, int j) {
+        float ax1 = v[i], ay1 = v[i + 1], az1 = v[i + 2];
+        float bx = v[j], by = v[j + 1], bz = v[j + 2];
+        if (az1 < NEAR && bz < NEAR) return;
+        if (az1 < NEAR) {
+            float t = (NEAR - az1) / (bz - az1);
+            ax1 = ax1 + (bx - ax1) * t; ay1 = ay1 + (by - ay1) * t; az1 = NEAR;
+        } else if (bz < NEAR) {
+            float t = (NEAR - bz) / (az1 - bz);
+            bx = bx + (ax1 - bx) * t; by = by + (ay1 - by) * t; bz = NEAR;
+        }
+        int x1 = (int) (halfW + ax1 / az1 * focal), y1 = (int) (halfH - ay1 / az1 * focal);
+        int x2 = (int) (halfW + bx / bz * focal), y2 = (int) (halfH - by / bz * focal);
+        if (x1 < -3000 || x1 > 3000 || y1 < -3000 || y1 > 3000) return;
+        if (x2 < -3000 || x2 > 3000 || y2 < -3000 || y2 > 3000) return;
+        gg.drawLine(x1, y1, x2, y2);
+    }
+
+    void drawWire(int x, int y, int z) {
+        for (int c = 0; c < 8; c++) {
+            toCam(x + (c & 1), y + ((c >> 1) & 1), z + ((c >> 2) & 1), cc, c * 3);
+        }
+        gg.setColor(0xFFFFFF);
+        for (int e = 0; e < 12; e++) line3(cc, WIRE[e][0] * 3, WIRE[e][1] * 3);
+    }
+
+    void buildOrder(int[] o, int n, int c) {
+        if (c < 0) c = 0;
+        if (c > n - 1) c = n - 1;
+        int k = 0;
+        for (int i = 0; i < c; i++) o[k++] = i;
+        for (int i = n - 1; i > c; i--) o[k++] = i;
+        o[k++] = c;
+    }
+
+    void paintWorld() {
+        gg.setColor(skyColor());
+        gg.fillRect(0, 0, sw, sh);
+
+        camX = px; camY = py + EYE; camZ = pz;
+        cosY = (float) Math.cos(yaw); sinY = (float) Math.sin(yaw);
+        cosP = (float) Math.cos(pitch); sinP = (float) Math.sin(pitch);
+        fx = sinY * cosP; fy = sinP; fz = cosY * cosP;
+        halfW = sw / 2f; halfH = sh / 2f;
+        focal = halfW / (float) Math.tan(FOV / 2f);
+
+        int bx0 = ifloor(camX) - rd, bz0 = ifloor(camZ) - rd;
+        buildOrder(oy, H, ifloor(camY));
+        for (int i = 0; i < H; i++) invY[oy[i]] = i;
+
+        // mobs dentro del area, ordenados segun el orden del pintor
+        int nm = 0;
+        int cnt = mobs.size();
+        if (cnt > 64) cnt = 64;
+        for (int i = 0; i < cnt; i++) {
+            Mob m = (Mob) mobs.elementAt(i);
+            int bi = ifloor(m.x) - bx0, bk = ifloor(m.z) - bz0;
+            if (bi < 0 || bi >= nb || bk < 0 || bk >= nb) continue;
+            int cy = ifloor(m.y + 0.4f);
+            if (cy < 0) cy = 0;
+            if (cy > H - 1) cy = H - 1;
+            int key = (invX[bi] * nb + invZ[bk]) * H + invY[cy];
+            int j = nm++;
+            while (j > 0 && mobKey[j - 1] > key) {
+                mobKey[j] = mobKey[j - 1];
+                mobOrd[j] = mobOrd[j - 1];
+                j--;
+            }
+            mobKey[j] = key;
+            mobOrd[j] = i;
+        }
+        int mp = 0;
+
+        float absFy = (fy < 0f) ? -fy : fy;
+        float slack = absFy * (H + 4) + 1.8f;
+
+        for (int a = 0; a < nb; a++) {
+            int x = bx0 + ox[a];
+            for (int b = 0; b < nb; b++) {
+                int z = bz0 + oz[b];
+                byte[] cd = chunkFor(x, z);
+                if (cd == null) continue;
+                float cdx = x + 0.5f - camX, cdz = z + 0.5f - camZ;
+                if (cdx * fx + cdz * fz < -slack) continue;
+                int base = (((x & 15) << 4) + (z & 15)) * H;
+                int colKey = (a * nb + b) * H;
+                for (int c = 0; c < H; c++) {
+                    int y = oy[c];
+                    int blk = cd[base + y];
+                    if (blk != 0) {
+                        float dx = cdx, dy = y + 0.5f - camY, dz = cdz;
+                        float dot = dx * fx + dy * fy + dz * fz;
+                        if (dot > -1.8f && dx * dx + dy * dy + dz * dz < cullSq) drawBlock(x, y, z, blk);
+                    }
+                    while (mp < nm && mobKey[mp] <= colKey + c) {
+                        drawMob((Mob) mobs.elementAt(mobOrd[mp]));
+                        mp++;
+                    }
+                }
+            }
+        }
+
+        if (tx >= 0 && tMob == null) drawWire(tx, ty, tz);
+    }
+
+    // ---------------------------------------------------------------- dibujo 2D
+    void txt(String s, int x, int y, int c, int anchor) {
+        gg.setColor(0x000000);
+        gg.drawString(s, x + 1, y + 1, anchor);
+        gg.setColor(c);
+        gg.drawString(s, x, y, anchor);
+    }
+
+    void drawIcon(int id, int dur, int x, int y, int s) {
+        if (id == 0) return;
+        int m = s / 6;
+        int ix = x + m, iy = y + m, is = s - 2 * m;
+        if (id == B_TORCH) {
+            gg.setColor(0x8B6B3A);
+            gg.fillRect(ix + is / 2 - 1, iy + is / 3, 3, is - is / 3);
+            gg.setColor(0xFFC030);
+            gg.fillRect(ix + is / 2 - 2, iy, 5, is / 3 + 1);
+        } else if (id == B_SAPLING) {
+            gg.setColor(0x6B4A2A);
+            gg.fillRect(ix + is / 2 - 1, iy + is / 2, 2, is - is / 2);
+            gg.setColor(0x3FA03A);
+            gg.fillRect(ix + is / 4, iy, is / 2, is / 2 + 1);
+        } else if (id <= B_FURNACE) {
+            gg.setColor(cTop[id]);
+            gg.fillRect(ix, iy, is, is / 2);
+            gg.setColor(cSide[id]);
+            gg.fillRect(ix, iy + is / 2, is, is - is / 2);
+            gg.setColor(0x000000);
+            gg.drawRect(ix, iy, is - 1, is - 1);
+        } else if (id == I_STICK) {
+            gg.setColor(icol[id]);
+            gg.drawLine(ix, iy + is - 1, ix + is - 1, iy);
+            gg.drawLine(ix + 1, iy + is - 1, ix + is, iy);
+        } else if (isTool(id)) {
+            gg.setColor(0x8B6B3A);
+            gg.drawLine(ix, iy + is - 1, ix + is - 1, iy);
+            gg.setColor(icol[id]);
+            gg.fillRect(ix + is / 4, iy, is - is / 4, is / 2 + 1);
+            gg.setColor(0x000000);
+            gg.drawString(tag[id], ix + is / 4 + 1, iy, Graphics.TOP | Graphics.LEFT);
+            if (dur > 0 && dur < TOOL_DUR) {
+                int bw = (is * dur) / TOOL_DUR;
+                gg.setColor(dur * 3 < TOOL_DUR ? 0xE02020 : 0x20C020);
+                gg.fillRect(ix, y + s - 3, bw, 2);
+            }
+        } else {
+            gg.setColor(icol[id]);
+            gg.fillRect(ix, iy, is, is);
+            gg.setColor(0x000000);
+            gg.drawRect(ix, iy, is - 1, is - 1);
+        }
+    }
+
+    void drawCount(int cnt, int x, int y, int s) {
+        if (cnt > 1) txt(Integer.toString(cnt), x + s - 2, y + s - 1, 0xFFFFFF, Graphics.BOTTOM | Graphics.RIGHT);
+    }
+
+    void paintHud() {
+        int cx = sw / 2, cy = sh / 2;
+        gg.setColor(0xFFFFFF);
+        gg.drawLine(cx - 5, cy, cx + 5, cy);
+        gg.drawLine(cx, cy - 5, cx, cy + 5);
+
+        if (mineProg > 0 && mineX >= 0) {
+            int need = breakTicks(blockAt(mineX, mineY, mineZ), slId[sel]);
+            int bw = 24 * mineProg / need;
+            gg.setColor(0x000000);
+            gg.fillRect(cx - 13, cy + 10, 26, 5);
+            gg.setColor(0xFFFFFF);
+            gg.fillRect(cx - 12, cy + 11, bw, 3);
+        }
+
+        int hs = Math.min(sw / 10, 24);
+        int hx = (sw - 9 * hs) / 2;
+        int hy = sh - hs - 3;
+        for (int i = 0; i < 9; i++) {
+            gg.setColor(0x404040);
+            gg.fillRect(hx + i * hs, hy, hs, hs);
+            gg.setColor(0x909090);
+            gg.drawRect(hx + i * hs, hy, hs - 1, hs - 1);
+            drawIcon(slId[i], slDur[i], hx + i * hs, hy, hs);
+            drawCount(slCnt[i], hx + i * hs, hy, hs);
+        }
+        gg.setColor(0xFFFFFF);
+        gg.drawRect(hx + sel * hs - 1, hy - 1, hs + 1, hs + 1);
+        gg.drawRect(hx + sel * hs, hy, hs - 1, hs - 1);
+
+        int ry = hy - 9;
+        for (int i = 0; i < 10; i++) {
+            int x = hx + i * 8;
+            gg.setColor(0x401010);
+            gg.fillRect(x, ry, 7, 7);
+            int hp2 = health - i * 2;
+            gg.setColor(0xE02020);
+            if (hp2 >= 2) gg.fillRect(x, ry, 7, 7);
+            else if (hp2 == 1) gg.fillRect(x, ry, 4, 7);
+        }
+        for (int i = 0; i < 10; i++) {
+            int x = hx + 9 * hs - (i + 1) * 8;
+            gg.setColor(0x402810);
+            gg.fillRect(x, ry, 7, 7);
+            int hg = hunger - i * 2;
+            gg.setColor(0xC08030);
+            if (hg >= 2) gg.fillRect(x, ry, 7, 7);
+            else if (hg == 1) gg.fillRect(x + 3, ry, 4, 7);
+        }
+        if (labelT > 0 && slId[sel] != 0) {
+            txt(names[slId[sel]], sw / 2, ry - 3, 0xFFFFFF, Graphics.BOTTOM | Graphics.HCENTER);
+        }
+        txt(layout == 0 ? "[A]" : "[B]", sw - 3, 2, 0xFFFF55, Graphics.TOP | Graphics.RIGHT);
+
+        if (dmgFlash > 0) {
+            gg.setColor(0xFF0000);
+            gg.fillRect(0, 0, sw, 4);
+            gg.fillRect(0, sh - 4, sw, 4);
+            gg.fillRect(0, 0, 4, sh);
+            gg.fillRect(sw - 4, 0, 4, sh);
+        }
+    }
+
+    void paintInv() {
+        gg.setColor(0x202020);
+        gg.fillRect(0, 0, sw, sh);
+        txt(craftN == FURN ? "Horno" : (craftN == 3 ? "Mesa de crafteo" : "Inventario"), sw / 2, 1, 0xFFFFFF, Graphics.TOP | Graphics.HCENTER);
+        int s = slS;
+        for (int i = 0; i < 46; i++) {
+            if (!slActive[i]) continue;
+            gg.setColor(i == OUT ? 0x6B8B6B : 0x8B8B8B);
+            gg.fillRect(slx[i], sly[i], s, s);
+            gg.setColor(0x373737);
+            gg.drawRect(slx[i], sly[i], s - 1, s - 1);
+            drawIcon(slId[i], slDur[i], slx[i], sly[i], s);
+            drawCount(slCnt[i], slx[i], sly[i], s);
+        }
+        if (craftN == FURN) {
+            int bx = slx[36] + s + 4, bw = slx[38] - bx - 4, by = sly[38] + s / 2 - 3;
+            gg.setColor(0x404040);
+            gg.fillRect(bx, by, bw, 6);
+            gg.setColor(0xF0F0F0);
+            gg.fillRect(bx, by, bw * fProg / SMELT_T, 6);
+            int fxx = slx[36] + s / 4, fyy = sly[36] + s + s / 4;
+            gg.setColor(0x404040);
+            gg.fillRect(fxx, fyy, s / 2, s / 2);
+            if (fBurn > 0 && fBurnMax > 0) {
+                int hh = (s / 2) * fBurn / fBurnMax;
+                gg.setColor(0xFF8000);
+                gg.fillRect(fxx, fyy + s / 2 - hh, s / 2, hh);
+            }
+        } else {
+            int ax0 = slx[OUT] - s;
+            txt("=>", ax0 + s / 2, sly[OUT] + s / 2 - 5, 0xFFFFFF, Graphics.TOP | Graphics.HCENTER);
+        }
+        gg.setColor(0xFFFF00);
+        gg.drawRect(slx[cursor], sly[cursor], s - 1, s - 1);
+        gg.drawRect(slx[cursor] + 1, sly[cursor] + 1, s - 3, s - 3);
+        if (heldId != 0) {
+            int hx = slx[cursor] + s / 3, hy = sly[cursor] + s / 3;
+            drawIcon(heldId, heldDur, hx, hy, s);
+            drawCount(heldCnt, hx, hy, s);
+        }
+        int nid = (heldId != 0) ? heldId : slId[cursor];
+        if (nid != 0) {
+            String nm = names[nid];
+            if (cursor == OUT && heldId == 0) nm = new StringBuffer("Resultado: ").append(nm).toString();
+            txt(nm, sw / 2, sh - 2, 0xFFFFFF, Graphics.BOTTOM | Graphics.HCENTER);
+        }
+    }
+
+    // ---------------------------------------------------------------- menus estilo Pocket Edition
+    void addHit(int x, int y, int w, int h, int id) {
+        if (htN >= 64) return;
+        htX[htN] = x; htY[htN] = y; htW[htN] = w; htH[htN] = h; htId[htN] = id;
+        htN++;
+    }
+
+    String fit(String s, int maxW) {
+        if (font.stringWidth(s) <= maxW) return s;
+        while (s.length() > 1 && font.stringWidth(cat(s, "..")) > maxW) s = s.substring(0, s.length() - 1);
+        return cat(s, "..");
+    }
+
+    boolean isSel(int id) {
+        return navN > 0 && navIds[navSel] == id;
+    }
+
+    void metrics() {
+        btnH = font.getHeight() + 10;
+        if (btnH < 22) btnH = 22;
+        btnW = sw - 24;
+        if (btnW > 200) btnW = 200;
+        if (btnW < 80) btnW = sw - 4;
+        btnX = (sw - btnW) / 2;
+    }
+
+    // fondo de tierra
+    void drawDirt(int pct) {
+        int t = 16;
+        for (int ty = 0; ty * t < sh; ty++) {
+            for (int tx = 0; tx * t < sw; tx++) {
+                int h0 = tx * 73856093 ^ ty * 19349663;
+                h0 = (h0 ^ (h0 >>> 13)) * 1274126177;
+                int h = (h0 >>> 8) & 3;
+                int c = (h == 0) ? 0x6B4F30 : ((h == 1) ? 0x7B5B34 : ((h == 2) ? 0x5E4426 : 0x6F5232));
+                gg.setColor(shade(c, pct));
+                gg.fillRect(tx * t, ty * t, t, t);
+                gg.setColor(shade(c, pct * 70 / 100));
+                gg.fillRect(tx * t + ((h0 >>> 12) & 7) + 2, ty * t + ((h0 >>> 16) & 7) + 2, 3, 3);
+            }
+        }
+    }
+
+    // oscurece lo que hay detras (rayas negras alternadas)
+    void dim() {
+        gg.setColor(0x000000);
+        for (int y = 0; y < sh; y += 2) gg.drawLine(0, y, sw, y);
+    }
+
+    void title(String s, int y, Font f, int col, int shadow) {
+        gg.setFont(f);
+        gg.setColor(shadow);
+        gg.drawString(s, sw / 2 + 2, y + 2, Graphics.TOP | Graphics.HCENTER);
+        gg.setColor(col);
+        gg.drawString(s, sw / 2, y, Graphics.TOP | Graphics.HCENTER);
+        gg.setFont(font);
+    }
+
+    int drawLogo(int y) {
+        title("MINECRAFT", y, fontBig, 0xC6C6C6, 0x2B2B2B);
+        y += fontBig.getHeight() + 1;
+        title("MICRO EDITION", y, fontMid, 0xFFE24A, 0x3A3000);
+        return y + fontMid.getHeight();
+    }
+
+    void drawBtn(int x, int y, int w, int h, String label, boolean on) {
+        int base = on ? 0x6F80C4 : 0x7C7C7C;
+        int hi = on ? 0xA3B0E6 : 0xB4B4B4;
+        int lo = on ? 0x3E4B8C : 0x4A4A4A;
+        gg.setColor(0x000000);
+        gg.fillRect(x, y, w, h);
+        gg.setColor(base);
+        gg.fillRect(x + 1, y + 1, w - 2, h - 2);
+        gg.setColor(hi);
+        gg.fillRect(x + 1, y + 1, w - 2, 2);
+        gg.fillRect(x + 1, y + 1, 2, h - 2);
+        gg.setColor(lo);
+        gg.fillRect(x + 1, y + h - 3, w - 2, 2);
+        gg.fillRect(x + w - 3, y + 1, 2, h - 2);
+        txt(fit(label, w - 8), x + w / 2, y + (h - font.getHeight()) / 2, on ? 0xFFFFA0 : 0xFFFFFF,
+                Graphics.TOP | Graphics.HCENTER);
+    }
+
+    void btn(int id, String label, int x, int y, int w, int h) {
+        drawBtn(x, y, w, h, label, isSel(id));
+        addHit(x, y, w, h, id);
+    }
+
+    void paintMenu() {
+        metrics();
+        drawDirt(55);
+        int y = drawLogo(Math.max(6, sh / 14));
+        y += Math.max(10, sh / 12);
+        btn(A_PLAY, "Jugar", btnX, y, btnW, btnH);
+        y += btnH + 8;
+        btn(A_QUIT, "Salir", btnX, y, btnW, btnH);
+        txt("En juego: L o R = pausa", sw / 2, sh - 3, 0xB0B0B0, Graphics.BOTTOM | Graphics.HCENTER);
+    }
+
+    void paintWorlds() {
+        metrics();
+        drawDirt(50);
+        title("Selecciona un mundo", 4, fontMid, 0xFFFFFF, 0x202020);
+        int y0 = 4 + fontMid.getHeight() + 6;
+        btn(A_NEW, "+ Crear mundo nuevo", btnX, y0, btnW, btnH);
+        int backY = sh - btnH - 4;
+        btn(A_WBACK, "Atras", btnX, backY, btnW, btnH);
+        int top = y0 + btnH + 6, bot = backY - 4, step = btnH + 3;
+        int n = worlds.size();
+        int vis = (bot - top + 3) / step;
+        if (vis < 1) vis = 1;
+        wVis = vis;
+        int maxS = n - vis;
+        if (maxS < 0) maxS = 0;
+        if (wScroll > maxS) wScroll = maxS;
+        if (wScroll < 0) wScroll = 0;
+        if (n == 0) txt("No hay mundos todavia", sw / 2, top + 6, 0xDDDDDD, Graphics.TOP | Graphics.HCENTER);
+        int xs = btnH - 6;
+        for (int r = 0; r < vis; r++) {
+            int i = wScroll + r;
+            if (i >= n) break;
+            WorldInfo w = (WorldInfo) worlds.elementAt(i);
+            int y = top + r * step;
+            int rw2 = btnW - xs - 4;
+            drawBtn(btnX, y, rw2, btnH, w.name, isSel(100 + i));
+            addHit(btnX, y, rw2, btnH, 100 + i);
+            int bx = btnX + btnW - xs, by = y + 3;
+            gg.setColor(0x000000);
+            gg.fillRect(bx, by, xs, xs);
+            gg.setColor(0x9A3030);
+            gg.fillRect(bx + 1, by + 1, xs - 2, xs - 2);
+            txt("X", bx + xs / 2, by + (xs - font.getHeight()) / 2, 0xFFFFFF, Graphics.TOP | Graphics.HCENTER);
+            addHit(bx, y, xs, btnH, 200 + i);
+        }
+        if (wScroll > 0) txt("^", sw - 4, top, 0xFFFFFF, Graphics.TOP | Graphics.RIGHT);
+        if (wScroll + vis < n) txt("v", sw - 4, bot - font.getHeight(), 0xFFFFFF, Graphics.TOP | Graphics.RIGHT);
+    }
+
+    void paintCreate() {
+        metrics();
+        drawDirt(50);
+        title("Crear mundo nuevo", 4, fontMid, 0xFFFFFF, 0x202020);
+        int y = 4 + fontMid.getHeight() + 14;
+        btn(A_CNAME, cat("Nombre: ", cName), btnX, y, btnW, btnH);
+        y += btnH + 6;
+        btn(A_CSEED, cat("Semilla: ", cSeedTxt.length() == 0 ? "aleatoria" : cSeedTxt), btnX, y, btnW, btnH);
+        y += btnH + 6;
+        btn(A_CGO, "Crear", btnX, y, btnW, btnH);
+        btn(A_CBACK, "Atras", btnX, sh - btnH - 4, btnW, btnH);
+    }
+
+    void paintConfirm() {
+        metrics();
+        drawDirt(40);
+        String nm = (delTarget != null) ? delTarget.name : "";
+        int y = sh / 5;
+        title("Borrar mundo?", y, fontMid, 0xFFFFFF, 0x202020);
+        y += fontMid.getHeight() + 8;
+        txt(fit(nm, sw - 10), sw / 2, y, 0xFFFF80, Graphics.TOP | Graphics.HCENTER);
+        y += font.getHeight() + 2;
+        txt("No se puede deshacer", sw / 2, y, 0xFF8080, Graphics.TOP | Graphics.HCENTER);
+        y += font.getHeight() + 14;
+        btn(A_YES, "Si, borrar", btnX, y, btnW, btnH);
+        y += btnH + 8;
+        btn(A_NO, "Cancelar", btnX, y, btnW, btnH);
+    }
+
+    void paintPause() {
+        paintWorld();
+        dim();
+        metrics();
+        int total = fontMid.getHeight() + 14 + 3 * btnH + 2 * 8;
+        int y = (sh - total) / 2;
+        if (y < 2) y = 2;
+        title("Juego en pausa", y, fontMid, 0xFFFFFF, 0x202020);
+        y += fontMid.getHeight() + 14;
+        btn(A_RESUME, "Reanudar", btnX, y, btnW, btnH);
+        y += btnH + 8;
+        btn(A_SETTINGS, "Ajustes", btnX, y, btnW, btnH);
+        y += btnH + 8;
+        btn(A_TOMENU, "Menu principal", btnX, y, btnW, btnH);
+        if (storeBroken) txt("No se pudo guardar!", sw / 2, y + btnH + 4, 0xFF5555, Graphics.TOP | Graphics.HCENTER);
+    }
+
+    void paintSettings() {
+        paintWorld();
+        dim();
+        metrics();
+        int total = fontMid.getHeight() + 14 + btnH + 8 + 2 * font.getHeight() + 8 + btnH;
+        int y = (sh - total) / 2;
+        if (y < 2) y = 2;
+        title("Ajustes", y, fontMid, 0xFFFFFF, 0x202020);
+        y += fontMid.getHeight() + 14;
+        btn(A_RD, new StringBuffer("Render: ").append(RD_NAME[rdIdx]).append(" (").append(RD_OPT[rdIdx]).append(")").toString(), btnX, y, btnW, btnH);
+        y += btnH + 8;
+        txt("4 / 6 o 5: cambiar", sw / 2, y, 0xDDDDDD, Graphics.TOP | Graphics.HCENTER);
+        y += font.getHeight();
+        txt("Mas lejos = mas lento", sw / 2, y, 0xDDDDDD, Graphics.TOP | Graphics.HCENTER);
+        y += font.getHeight() + 8;
+        btn(A_SETBACK, "Atras", btnX, y, btnW, btnH);
+    }
+
+    void paintDead() {
+        int w = Math.min(sw - 10, 160), h = 50;
+        int x = (sw - w) / 2, y = (sh - h) / 2;
+        gg.setColor(0x600000);
+        gg.fillRect(x, y, w, h);
+        gg.setColor(0xFF4040);
+        gg.drawRect(x, y, w - 1, h - 1);
+        txt("MORISTE", sw / 2, y + 8, 0xFFFFFF, Graphics.TOP | Graphics.HCENTER);
+        txt("5: reaparecer", sw / 2, y + 28, 0xFFFFFF, Graphics.TOP | Graphics.HCENTER);
+    }
+
+    void paintDebug() {
+        long now = System.currentTimeMillis();
+        dbgFrames++;
+        if (now - dbgT0 >= 1000) {
+            dbgFps = dbgFrames;
+            dbgFrames = 0;
+            dbgT0 = now;
+            StringBuffer sb = new StringBuffer();
+            if (now - dbgMemT >= 3000) {
+                // memoria VIVA: se fuerza el GC y se resta lo que habia antes del juego
+                dbgMemT = now;
+                Runtime rt = Runtime.getRuntime();
+                rt.gc();
+                long live = rt.totalMemory() - rt.freeMemory() - Minecraft2D.memBase;
+                sb.append("RAM juego ").append(live / 1024).append('K');
+                dbgMem = sb.toString();
+                sb.setLength(0);
+            }
+            sb.append("FPS ").append(dbgFps).append("  Mobs ").append(mobs.size());
+            dbgInfo = sb.toString();
+        }
+        StringBuffer sc = new StringBuffer();
+        sc.append("Ch ").append(nch).append(" pend ").append(pending.size()).append(" disco ").append(idx.size());
+        String l3 = sc.toString();
+        sc.setLength(0);
+        sc.append("X").append(ifloor(px)).append(" Y").append(ifloor(py)).append(" Z").append(ifloor(pz));
+        String l4 = sc.toString();
+
+        int lh = font.getHeight();
+        int w = font.stringWidth(dbgMem);
+        int w2 = font.stringWidth(dbgInfo);
+        int w3 = font.stringWidth(l3);
+        int w4 = font.stringWidth(l4);
+        if (w2 > w) w = w2;
+        if (w3 > w) w = w3;
+        if (w4 > w) w = w4;
+        gg.setColor(0x000000);
+        gg.fillRect(1, 1, w + 4, lh * 4 + 3);
+        gg.setColor(0x55FF55);
+        gg.drawString(dbgMem, 3, 2, Graphics.TOP | Graphics.LEFT);
+        gg.drawString(dbgInfo, 3, 2 + lh, Graphics.TOP | Graphics.LEFT);
+        gg.drawString(l3, 3, 2 + lh * 2, Graphics.TOP | Graphics.LEFT);
+        gg.drawString(l4, 3, 2 + lh * 3, Graphics.TOP | Graphics.LEFT);
+    }
+
+    protected void paint(Graphics g) {
+        synchronized (lock) {
+            gg = g;
+            sw = getWidth();
+            sh = getHeight();
+            g.setFont(font);
+            htN = 0;
+            if (state == ST_MENU) {
+                paintMenu();
+            } else if (state == ST_WORLDS) {
+                paintWorlds();
+            } else if (state == ST_CREATE) {
+                paintCreate();
+            } else if (state == ST_CONFIRM) {
+                paintConfirm();
+            } else if (state == ST_PAUSE) {
+                paintPause();
+            } else if (state == ST_SET) {
+                paintSettings();
+            } else if (state == ST_INV) {
+                if (!slActive[OUT]) layoutInv();
+                paintInv();
+            } else {
+                paintWorld();
+                paintHud();
+                if (Minecraft2D.DEBUG) paintDebug();
+                if (state == ST_DEAD) paintDead();
+            }
+            if (busy != null) {
+                int lh = font.getHeight();
+                gg.setColor(0x000000);
+                gg.fillRect(0, sh - lh - 4, sw, lh + 4);
+                txt(busy, sw / 2, sh - 2, 0xFFFF55, Graphics.BOTTOM | Graphics.HCENTER);
+            }
+        }
+    }
+}

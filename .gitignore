@@ -1,0 +1,5 @@
+build/
+build.log
+javac.*.args
+j2me-builder-files/
+*.jar
