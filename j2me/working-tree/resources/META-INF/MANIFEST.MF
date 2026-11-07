@@ -1,6 +1,6 @@
-Manifest-Version: 1.1
+Manifest-Version: 1.2
 MIDlet-Name: Minecraft Micro Edition
-MIDlet-Version: 1.1.0
+MIDlet-Version: 1.2.0
 MIDlet-Vendor: Termux
 MIDlet-1: Minecraft Micro Edition,,Minecraft2D
 MicroEdition-Configuration: CLDC-1.1
