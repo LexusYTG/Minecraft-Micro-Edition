@@ -1,72 +1,45 @@
 # Minecraft Micro Edition
 
-Un Minecraft en 3D para J2ME (CLDC 1.1 / MIDP 2.0), con mundo infinito, supervivencia y mundos guardables. Todo el render es por software (polígonos rellenos, sin texturas), pensado para correr en un emulador de J2ME en Android.
+Un juego de mundo abierto estilo Minecraft en 3D para J2ME (CLDC 1.1 / MIDP 2.0). Cuenta con mundo infinito, supervivencia, crafteo, generación procedural y mundos guardables. Todo el renderizado se realiza por software (polígonos y texturas procedurales dibujadas en tiempo real), optimizado para consumir la menor cantidad de memoria RAM posible.
 
-> **Aviso: es experimental.** Se probó en **J2ME Loader**. En dispositivos reales (teléfonos con Java ME de verdad) puede no funcionar, ir lento o quedarse sin memoria.
+> **Aviso:** Se probó exhaustivamente en **J2ME Loader** (Android). En dispositivos físicos muy antiguos puede requerir ajustar la distancia de renderizado al mínimo.
 
-## Qué está implementado
+## Novedades de la versión 1.1.0
+- **Texturas e Iconos:** Se activó el renderizado de texturas procedurales para los bloques (vetas de madera, piedra, menas) y dibujos píxel-art para los iconos del inventario (herramientas, comidas, etc.), todo sin usar archivos de imagen para ahorrar memoria.
+- **Contenido ampliado:** Se agregaron biomas (desiertos, nieve), agua, minerales (carbón, hierro, oro, diamante), nuevas herramientas (piedra, hierro, oro, diamante), puertas funcionales, camas para dormir y cambiar el punto de reaparición, y fundición de minerales en el horno.
 
-**Menús y mundos**
-- Menú principal estilo Pocket Edition: Jugar y Salir.
-- Pantalla de mundos: lista para cargar, botón para crear y opción de borrar.
-- Crear mundo con nombre y semilla (vacía = aleatoria).
-- Guardado en RecordStore: autoguardado cada 2 minutos y al volver al menú. Guarda posición, inventario, vida, hambre, hora del día y el horno.
-- Menú de pausa con L o R: Reanudar, Ajustes y Volver al menú principal.
-- Ajustes: distancia de renderizado (Mínima, Normal, Lejos, Muy lejos, Extrema).
+## Características Principales
 
-**Mundo**
-- Mundo infinito por chunks de 16x16 (altura 32) con relieve generado por ruido.
-- Bloques: pasto, tierra, piedra, tronco, hojas, tablones, mesa de crafteo, adoquín, horno, brote y antorcha.
-- Árboles generados.
-- Ciclo día/noche de 20 minutos: el cielo y los bloques se oscurecen de noche.
+**Mundo y Generación**
+- Mundo infinito por chunks (16x16, altura 32) con relieve, ríos y biomas.
+- Ciclo de día y noche de 20 minutos, con iluminación dinámica por antorchas.
+- Generación de árboles, cactus, menas (carbón, hierro, oro, diamante) y cuevas.
+- Bloques disponibles: pasto, tierra, piedra, adoquín, arena, arenisca, grava, nieve, hielo, agua, troncos, hojas, tablones, mesa de crafteo, horno, antorcha, brote, TNT, puertas y camas.
 
-**Jugador**
-- Vida y hambre, con regeneración, inanición y daño por caída.
-- Autosalto: sube escalones de un bloque al caminar contra ellos.
-- Minar y colocar bloques; el tiempo de minado depende de la herramienta correcta.
-- Herramientas de madera: pico, hacha, pala y espada, con durabilidad.
-- Comer: manzana y carnes (crudas y cocidas).
+**Jugador y Supervivencia**
+- Sistema de vida, hambre, regeneración, inanición y daño por caída, cactus y ahogamiento (burbujas de oxígeno).
+- Autosalto para subir escalones de un bloque automáticamente.
+- Combate cuerpo a cuerpo con espadas y herramientas.
+- Interacción con el entorno: abrir/cerrar puertas, dormir en camas para saltar la noche y fijar el punto de reaparición.
 
-**Crafteo**
-- Inventario de 36 casillas más hotbar de 9.
+**Crafteo y Progresión**
+- Inventario de 36 casillas + hotbar de 9.
 - Crafteo 2x2 en el inventario y 3x3 en la mesa de crafteo.
-- Recetas: tablones, palos, mesa, herramientas de madera, horno (8 adoquines en anillo) y antorchas (carbón vegetal + palo).
-
-**Horno y cocina**
-- Funde adoquín en piedra, troncos en carbón vegetal y carne cruda en carne cocida.
-- Combustible: troncos y tablones (15 s), palos (5 s) y carbón vegetal (80 s). Cada item tarda 10 s.
+- Herramientas de 5 materiales distintos (madera, piedra, hierro, oro, diamante), cada uno con su nivel de minería, velocidad y durabilidad.
+- Horno completo: funde adoquín en piedra, troncos en carbón, menas en lingotes y carne cruda en cocida.
 
 **Mobs**
-- Pasivos: oveja, pollo y vaca, con sus drops (lana, carne, plumas).
-- Hostiles: zombie (persigue y golpea) y creeper (se acerca, parpadea y explota rompiendo bloques). Salen de noche y se queman de día.
-
-**Plantación**
-- Las hojas pueden soltar brotes. Se plantan sobre pasto o tierra y se convierten en árbol a los 5 ticks exactos, si hay espacio.
-
-**Iluminación**
-- Las antorchas iluminan el entorno de noche.
-
-## Qué no está implementado
-- Sonido y música.
-- Texturas (todo son colores planos).
-- Minerales, herramientas de piedra o hierro, armaduras.
-- Agua, lava, arena y vidrio.
-- Camas, clima y otras dimensiones.
-- Multijugador.
-- Usos para la pólvora o la carne podrida (se obtienen pero no tienen receta).
-- Un horno por bloque: hay uno por mundo, compartido por todos los hornos colocados.
-- Guardar los mobs: se regeneran al entrar al mundo.
-- Los brotes pierden su temporizador si salís del mundo antes de que crezcan.
+- Pasivos: oveja, pollo y vaca.
+- Hostiles: zombie y creeper. Aparecen de noche y se queman con la luz del día.
 
 ## Controles
-Se juega con teclado numérico (en J2ME Loader, con el teclado virtual).
-
+Se juega con el teclado numérico (en J2ME Loader, con el teclado virtual).
 - **Layout A (caminar):** 2 adelante, 8 atrás, 4 y 6 girar, 7 y 9 mirar arriba y abajo, 5 saltar.
 - **Layout B (cámara):** 2 y 8 mirar arriba y abajo, 4 y 6 girar, 5 avanzar, 7 retroceder, 9 saltar.
 - **#:** alterna entre los dos layouts.
 - **0:** abre o cierra el inventario.
 - **1 y 3:** casilla anterior o siguiente de la hotbar.
-- **\*** mantenido: minar o atacar. Toque corto: poner bloque, comer, abrir mesa u horno.
+- **\* mantenido:** minar o atacar. **Toque corto:** poner bloque, comer, abrir mesa, horno o puerta.
 - **L o R:** menú de pausa.
 - **Inventario:** 2, 4, 6 y 8 mueven el cursor, 5 selecciona y \* toma o deja de a uno.
 
@@ -80,4 +53,4 @@ Hace falta `javac`, `jar` y `java`, más una carpeta `j2me-builder-files/` con l
 El jar final queda en `working-tree/build/hello-final.jar`.
 
 ## Descarga
-El `.jar` listo está en la sección Releases.
+El `.jar` listo para instalar está en la sección de **Releases** de este repositorio.
