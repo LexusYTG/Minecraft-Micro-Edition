@@ -25,6 +25,13 @@ LexusYTG
 
 **---------codigo---------**
 LexusYTG
+
+
+
+
+
+
+**---------controles---------**
 Claude
 
 
@@ -42,7 +49,7 @@ LexsYTG
 
 **---------scripts---------**
 LexusYTG
-
+Claude
 
 
 
