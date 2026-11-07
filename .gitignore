@@ -3,3 +3,8 @@ build.log
 javac.*.args
 j2me-builder-files/
 *.jar
+*.o
+*.elf
+PARAM.SFO
+EBOOT.PBP
+j2me/j2me-builder-files/

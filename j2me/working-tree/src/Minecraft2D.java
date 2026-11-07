@@ -53,6 +53,7 @@ class Mob {
 
 class WorldInfo {
     int id, seed, rid;
+    int mode;          // 0 = supervivencia, 1 = creativo
     String name;
 }
 
@@ -76,7 +77,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     static final int ST_MENU = 0, ST_PLAY = 1, ST_INV = 2, ST_DEAD = 3, ST_PAUSE = 4, ST_SET = 5,
             ST_WORLDS = 6, ST_CREATE = 7, ST_CONFIRM = 8;
     static final int A_PLAY = 1, A_QUIT = 2, A_RESUME = 3, A_SETTINGS = 4, A_TOMENU = 5, A_RD = 6, A_SETBACK = 7,
-            A_NEW = 8, A_WBACK = 9, A_CNAME = 10, A_CSEED = 11, A_CGO = 12, A_CBACK = 13, A_YES = 14, A_NO = 15;
+            A_NEW = 8, A_WBACK = 9, A_CNAME = 10, A_CSEED = 11, A_CGO = 12, A_CBACK = 13, A_YES = 14, A_NO = 15, A_CMODE = 16;
     static final int J_ENTER = 1, J_APPLY = 2, J_LEAVE = 3, J_SAVE = 4, J_FLUSH = 5;
 
     static final int B_AIR = 0, B_GRASS = 1, B_DIRT = 2, B_STONE = 3, B_LOG = 4,
@@ -97,6 +98,9 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     static final int B_COAL_ORE = 42, B_IRON_ORE = 43, B_GOLD_ORE = 44, B_DIAM_ORE = 45,
             B_IRON_BLK = 46, B_GOLD_BLK = 47, B_DIAM_BLK = 48, B_BED = 49;
     static final int I_IRON_INGOT = 50, I_GOLD_INGOT = 51, I_DIAMOND = 52, I_TOOLS = 56;
+    // Nether: roca, lava, obsidiana, portal, arena de almas, piedra luminosa, lecho de roca; encendedor
+    static final int B_NETHERRACK = 53, B_LAVA = 54, B_OBSIDIAN = 55, B_PORTAL = 72, B_SOULSAND = 73,
+            B_GLOWSTONE = 74, B_BEDROCK = 75, I_LIGHTER = 76;
 
     static final float NEAR = 0.1f, FOV = 1.1f, EYE = 1.62f, GRAV = 0.08f, JUMP = 0.52f;
     static final float REACH = 5f, MOB_REACH = 3.5f, LOOK = 0.08f, SPD = 0.16f, HW = 0.3f;
@@ -157,7 +161,9 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     // antorchas cercanas (para iluminar de noche)
     float[] torchX = new float[16], torchY = new float[16], torchZ = new float[16];
     int torchN;
-    float[][] cowParts, zombieParts, creeperParts, tntParts;
+    float[][] cowParts, zombieParts, creeperParts, tntParts, pigmanParts;
+    int dim, portalT, lavaT;      // dim: 0 = overworld, 1 = nether
+    boolean portalLock;
     int hungerFx, cactusT, air = 300, airT;
     int[] tintBuf;
 
@@ -218,6 +224,11 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     String msg = "";
     boolean bedOn;
     int bedX, bedY, bedZ;
+    // modo creativo
+    boolean creative, flying;
+    int jumpTick = -100, palPage, cMode;
+    int[] palIds = new int[80];
+    int palN;
     int heldId, heldCnt, heldDur;
     int cursor, craftN = 2, slS;
     int[] slx = new int[46], sly = new int[46];
@@ -249,6 +260,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         fontBig = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_BOLD, Font.SIZE_LARGE);
         initTables();
         initRecipes();
+        initPalette();
         loadSettings();
         setupWindow(RD_OPT[rdIdx]);
         go(ST_MENU);
@@ -399,7 +411,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         byte[] cd = chunkFor(x, z);
         if (cd == null) return true;
         int b = cd[(((x & 15) << 4) + (z & 15)) * H + y];
-        return b != 0 && b != B_SAPLING && b != B_TORCH && b != B_WATER && b != B_DOOR_LO && b != B_DOOR_UO;
+        return b != 0 && b != B_SAPLING && b != B_TORCH && b != B_WATER && b != B_DOOR_LO && b != B_DOOR_UO && b != B_LAVA && b != B_PORTAL;
     }
 
     boolean boxCollides(float x, float y, float z, float hw, float h) {
@@ -445,13 +457,15 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         return t == 0 ? 59 : (t == 1 ? 131 : (t == 2 ? 250 : (t == 3 ? 32 : 1561)));
     }
     int needLevel(int b) {
+        if (b == B_OBSIDIAN) return 3;
         if (b == B_IRON_ORE || b == B_IRON_BLK) return 1;
         if (b == B_GOLD_ORE || b == B_DIAM_ORE || b == B_GOLD_BLK || b == B_DIAM_BLK) return 2;
         return 0;
     }
     boolean isTool(int id) { return toolType(id) >= 0; }
     void say(String t) { msg = t; msgT = 70; }
-    boolean isBlockItem(int id) { return (id >= 1 && id <= 19) || id == I_DOOR || (id >= B_COAL_ORE && id <= B_BED); }
+    boolean isBlockItem(int id) { return (id >= 1 && id <= 19) || id == I_DOOR || (id >= B_COAL_ORE && id <= B_BED)
+                || (id >= B_NETHERRACK && id <= B_OBSIDIAN) || id == B_SOULSAND || id == B_GLOWSTONE; }
     boolean isDoor(int b) { return b >= B_DOOR_LC && b <= B_DOOR_UO; }
     boolean isFood(int id) {
         return id == I_APPLE || id == I_MUTTON || id == I_CHICKEN || id == I_BEEF || id == I_STEAK
@@ -516,7 +530,14 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         cTop[B_GOLD_BLK] = 0xF2D040; cSide[B_GOLD_BLK] = 0xF2D040; cBot[B_GOLD_BLK] = 0xF2D040;
         cTop[B_DIAM_BLK] = 0x5AE8E0; cSide[B_DIAM_BLK] = 0x5AE8E0; cBot[B_DIAM_BLK] = 0x5AE8E0;
         cTop[B_BED] = 0xC83A34; cSide[B_BED] = 0x6B4A2A; cBot[B_BED] = 0x6B4A2A;
-        for (int b = 1; b < 50; b++) {
+        cTop[B_NETHERRACK] = 0x7A2E2E; cSide[B_NETHERRACK] = 0x7A2E2E; cBot[B_NETHERRACK] = 0x7A2E2E;
+        cTop[B_LAVA] = 0xE0601A; cSide[B_LAVA] = 0xE0601A; cBot[B_LAVA] = 0xE0601A;
+        cTop[B_OBSIDIAN] = 0x1C0F2E; cSide[B_OBSIDIAN] = 0x1C0F2E; cBot[B_OBSIDIAN] = 0x1C0F2E;
+        cTop[B_SOULSAND] = 0x5A4636; cSide[B_SOULSAND] = 0x5A4636; cBot[B_SOULSAND] = 0x5A4636;
+        cTop[B_GLOWSTONE] = 0xF2D488; cSide[B_GLOWSTONE] = 0xF2D488; cBot[B_GLOWSTONE] = 0xF2D488;
+        cTop[B_BEDROCK] = 0x444444; cSide[B_BEDROCK] = 0x444444; cBot[B_BEDROCK] = 0x444444;
+        cTop[B_PORTAL] = 0x8A2BE2; cSide[B_PORTAL] = 0x8A2BE2; cBot[B_PORTAL] = 0x8A2BE2;
+        for (int b = 1; b < 80; b++) {
             for (int f = 0; f < 6; f++) {
                 int base = (f == 2) ? cTop[b] : (f == 3 ? cBot[b] : cSide[b]);
                 shadedCol[b][f] = shade(base, FSH[f]);
@@ -538,6 +559,12 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         names[B_DIAM_BLK] = "Bloque de diamante"; names[B_BED] = "Cama";
         names[I_IRON_INGOT] = "Lingote de hierro"; names[I_GOLD_INGOT] = "Lingote de oro"; names[I_DIAMOND] = "Diamante";
         icol[I_IRON_INGOT] = 0xD8D8D8; icol[I_GOLD_INGOT] = 0xF0C020; icol[I_DIAMOND] = 0x4AE8E0;
+        hard[B_NETHERRACK] = 0.4f; hard[B_LAVA] = 0f; hard[B_OBSIDIAN] = 25f; hard[B_SOULSAND] = 0.5f;
+        hard[B_GLOWSTONE] = 0.3f; hard[B_BEDROCK] = 100000f; hard[B_PORTAL] = 0f;
+        names[B_NETHERRACK] = "Roca del infierno"; names[B_LAVA] = "Lava"; names[B_OBSIDIAN] = "Obsidiana";
+        names[B_PORTAL] = "Portal"; names[B_SOULSAND] = "Arena de almas"; names[B_GLOWSTONE] = "Piedra luminosa";
+        names[B_BEDROCK] = "Lecho de roca"; names[I_LIGHTER] = "Encendedor";
+        icol[I_LIGHTER] = 0xD8D8D8;
         String[] matN = { "madera", "piedra", "hierro", "oro", "diamante" };
         String[] typN = { "Pico", "Hacha", "Pala", "Espada" };
         int[] matC = { 0xC49A55, 0x8A8A8A, 0xD8D8D8, 0xF0D030, 0x4AE8E0 };
@@ -583,6 +610,15 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             { 0f, 1.65f, 0f, 0.20f, 0.20f, 0.20f, 0x4A8A4A },
             { 0.30f, 1.25f, 0.25f, 0.08f, 0.08f, 0.30f, 0x4A8A4A },
             { -0.30f, 1.25f, 0.25f, 0.08f, 0.08f, 0.30f, 0x4A8A4A }
+        };
+        pigmanParts = new float[][] {
+            { 0.12f, 0.4f, 0f, 0.10f, 0.40f, 0.10f, 0x7A4A32 },
+            { -0.12f, 0.4f, 0f, 0.10f, 0.40f, 0.10f, 0x7A4A32 },
+            { 0f, 1.1f, 0f, 0.22f, 0.35f, 0.12f, 0xB86868 },
+            { 0f, 1.65f, 0f, 0.20f, 0.20f, 0.20f, 0xD89090 },
+            { 0f, 1.6f, 0.22f, 0.08f, 0.06f, 0.04f, 0xB06060 },
+            { 0.30f, 1.25f, 0.25f, 0.08f, 0.08f, 0.30f, 0xD89090 },
+            { -0.30f, 1.25f, 0.25f, 0.08f, 0.08f, 0.30f, 0xD89090 }
         };
         tntParts = new float[][] { { 0f, 0.5f, 0f, 0.49f, 0.49f, 0.49f, 0xC03030 } };
         creeperParts = new float[][] {
@@ -637,6 +673,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         rec(1, 1, new int[] { B_DIAM_BLK }, I_DIAMOND, 9);
         int WL = I_WOOL;
         rec(3, 2, new int[] { WL, WL, WL, P, P, P }, B_BED, 1);
+        rec(1, 2, new int[] { I_IRON_INGOT, I_COAL }, I_LIGHTER, 1);
     }
 
     // ---------------------------------------------------------------- mundo
@@ -742,11 +779,45 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         else if (c >= 22 && c < 37 && dep >= 4) t = B_IRON_ORE;
         else if (c >= 37 && c < 43 && y <= 12 && dep >= 4) t = B_GOLD_ORE;
         else if (c >= 43 && c < 47 && y <= 7 && dep >= 5) t = B_DIAM_ORE;
+        else if (c >= 47 && c < 58 && y <= 6 && dep >= 6) t = B_OBSIDIAN;
         else return B_STONE;
         return (hash(x, z, y + 300) % 10 < 7) ? t : B_STONE;
     }
 
+    // Nether: suelo de roca con mar de lava, techo con piedra luminosa, lecho de roca arriba y abajo
+    void genNether(int s, int cx, int cz) {
+        byte[] d = chData[s];
+        for (int i = 0; i < CHB; i++) d[i] = 0;
+        int x0 = cx << 4, z0 = cz << 4;
+        for (int lx = 0; lx < CS; lx++) {
+            for (int lz = 0; lz < CS; lz++) {
+                int x = x0 + lx, z = z0 + lz;
+                int fl = 6 + (int) (noise(x, z, 4, 11) * 7f);
+                int ce = 25 - (int) (noise(x, z, 4, 12) * 4f);
+                if (hash(x, z, 52) % 22 == 0) ce -= 3;
+                if (hash(x, z, 53) % 24 == 0) fl += 2;
+                int base = (lx * CS + lz) * H;
+                for (int y = 0; y < H; y++) {
+                    int blk = 0;
+                    if (y == 0 || y == H - 1) blk = B_BEDROCK;
+                    else if (y < fl) {
+                        blk = B_NETHERRACK;
+                        if (y == fl - 1 && noise(x, z, 3, 13) > 0.62f) blk = B_SOULSAND;
+                        else if (hash(x >> 1, z >> 1, (y >> 1) + 400) % 1000 < 15 && hash(x, z, y + 500) % 10 < 7) blk = B_GOLD_ORE;
+                    } else if (y >= ce) {
+                        blk = B_NETHERRACK;
+                        if (y == ce && hash(x >> 1, z >> 1, 51) % 28 == 0) blk = B_GLOWSTONE;
+                    } else if (y < 9) {
+                        blk = B_LAVA;
+                    }
+                    d[base + y] = (byte) blk;
+                }
+            }
+        }
+    }
+
     void genChunk(int s, int cx, int cz) {
+        if (dim == 1) { genNether(s, cx, cz); return; }
         byte[] d = chData[s];
         for (int i = 0; i < CHB; i++) d[i] = 0;
         int x0 = cx << 4, z0 = cz << 4;
@@ -801,7 +872,8 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     }
 
     int chunkKey(int cx, int cz) {
-        return ((cx & 0xFFFF) << 16) | (cz & 0xFFFF);
+        int kz = (dim == 1) ? (cz ^ 0x8000) : cz;   // el Nether usa claves distintas en el mismo almacen
+        return ((cx & 0xFFFF) << 16) | (kz & 0xFFFF);
     }
 
     byte[] packChunk(byte[] d) {
@@ -859,7 +931,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             openStore();
             ByteArrayOutputStream bo = new ByteArrayOutputStream();
             DataOutputStream o = new DataOutputStream(bo);
-            o.writeByte(3);
+            o.writeByte(4);
             o.writeInt(seed);
             o.writeFloat(px); o.writeFloat(py); o.writeFloat(pz);
             o.writeFloat(yaw); o.writeFloat(pitch);
@@ -880,6 +952,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             for (int i = 0; i < 3; i++) { o.writeByte(fId[i]); o.writeByte(fCnt[i]); }
             o.writeShort(fBurn); o.writeShort(fBurnMax); o.writeShort(fProg);
             o.writeByte(bedOn ? 1 : 0); o.writeInt(bedX); o.writeInt(bedY); o.writeInt(bedZ);
+            o.writeByte(dim);
             o.flush();
             byte[] b = bo.toByteArray();
             if (hdrRid == 0) hdrRid = rs.addRecord(b, 0, b.length);
@@ -895,7 +968,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             byte[] b = rs.getRecord(1);
             DataInputStream in = new DataInputStream(new ByteArrayInputStream(b));
             int ver = in.readByte();
-            if (ver != 1 && ver != 2 && ver != 3) return false;
+            if (ver < 1 || ver > 4) return false;
             seed = in.readInt();
             px = in.readFloat(); py = in.readFloat(); pz = in.readFloat();
             yaw = in.readFloat(); pitch = in.readFloat();
@@ -930,6 +1003,10 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
                 bedOn = in.readByte() != 0;
                 bedX = in.readInt(); bedY = in.readInt(); bedZ = in.readInt();
                 if (bedY < 0 || bedY >= H) bedOn = false;
+            }
+            if (ver >= 4) {
+                dim = in.readByte();
+                if (dim < 0 || dim > 1) dim = 0;
             }
             if (health < 1) health = 1;
             if (health > 20) health = 20;
@@ -1096,6 +1173,22 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     boolean spawnAt(int type, int x, int z) {
         if (mobs.size() >= 40) return false;
         if (chunkFor(x, z) == null) return false;
+        if (dim == 1) {   // nether: buscar suelo firme dentro de la caverna
+            if (type < 3) return false;
+            for (int y = 24; y > 3; y--) {
+                if (blockAt(x, y, z) == 0 && blockAt(x, y + 1, z) == 0 && solidAt(x, y - 1, z)) {
+                    Mob nm = new Mob();
+                    nm.type = type;
+                    nm.x = x + 0.5f; nm.z = z + 0.5f; nm.y = y + 0.001f;
+                    nm.ang = rndf() * 6.2832f;
+                    nm.hp = mobHp(type);
+                    nm.timer = 10 + rnd(40);
+                    mobs.addElement(nm);
+                    return true;
+                }
+            }
+            return false;
+        }
         int top = topY(x, z);
         if (top < 0 || top + 2 >= H) return false;
         int tb = blockAt(x, top, z);
@@ -1126,6 +1219,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
 
     // animales para un chunk recien generado (0 a 2)
     void spawnInChunk(int cx, int cz) {
+        if (dim == 1) return;
         int n = rnd(3);
         for (int i = 0; i < n; i++) {
             for (int tries = 0; tries < 8; tries++) {
@@ -1171,7 +1265,8 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         for (int i = 0; i < 3; i++) { fId[i] = 0; fCnt[i] = 0; }
         fBurn = 0; fBurnMax = 0; fProg = 0;
         sapN = 0; torchN = 0; hostTimer = 0;
-        bedOn = false; msgT = 0;
+        bedOn = false; msgT = 0; flying = false;
+        dim = 0; portalT = 0; portalLock = false; lavaT = 0;
         hungerFx = 0; cactusT = 0; air = 300; airT = 0;
     }
 
@@ -1188,6 +1283,8 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         inWorld = false;
         curWorld = w;
         curStore = cat("mcw", w.id);
+        creative = (w.mode == 1);
+        flying = false;
         seed = w.seed;
         for (int i = 0; i < nch; i++) { chCx[i] = NONE; chCz[i] = NONE; chDirty[i] = false; }
         mobs.removeAllElements();
@@ -1253,6 +1350,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             o.writeInt(w.id);
             o.writeInt(w.seed);
             o.writeUTF(w.name);
+            o.writeByte(w.mode);
             o.flush();
             return bo.toByteArray();
         } catch (Exception e) {
@@ -1276,6 +1374,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
                     w.id = in.readInt();
                     w.seed = in.readInt();
                     w.name = in.readUTF();
+                    if (in.available() > 0) w.mode = in.readByte();
                     int p = 0;
                     while (p < worlds.size() && ((WorldInfo) worlds.elementAt(p)).id < w.id) p++;
                     worlds.insertElementAt(w, p);
@@ -1295,11 +1394,12 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         return id;
     }
 
-    WorldInfo addWorld(String name, int sd) {
+    WorldInfo addWorld(String name, int sd, int mode) {
         WorldInfo w = new WorldInfo();
         w.id = nextId();
         w.name = name;
         w.seed = sd;
+        w.mode = mode;
         RecordStore r = null;
         try {
             r = RecordStore.openRecordStore(LIST_STORE, true);
@@ -1355,7 +1455,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (state == ST_MENU) navIds = new int[] { A_PLAY, A_QUIT };
         else if (state == ST_PAUSE) navIds = new int[] { A_RESUME, A_SETTINGS, A_TOMENU };
         else if (state == ST_SET) navIds = new int[] { A_RD, A_SETBACK };
-        else if (state == ST_CREATE) navIds = new int[] { A_CNAME, A_CSEED, A_CGO, A_CBACK };
+        else if (state == ST_CREATE) navIds = new int[] { A_CNAME, A_CSEED, A_CMODE, A_CGO, A_CBACK };
         else if (state == ST_CONFIRM) navIds = new int[] { A_YES, A_NO };
         else if (state == ST_WORLDS) {
             int n = worlds.size();
@@ -1399,8 +1499,9 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     void openCreate() {
         cName = cat("Mundo ", nextId());
         cSeedTxt = "";
+        cMode = 0;
         go(ST_CREATE);
-        navSel = 2;
+        navSel = 3;
     }
 
     void openPause() {
@@ -1433,7 +1534,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         } else {
             try { sd = Integer.parseInt(cSeedTxt); } catch (Exception e) { sd = cSeedTxt.hashCode(); }
         }
-        jobWorld = addWorld(cName, sd);
+        jobWorld = addWorld(cName, sd, cMode);
         job = J_ENTER;
     }
 
@@ -1482,6 +1583,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             case A_WBACK: openMain(); break;
             case A_CNAME: editText(1); break;
             case A_CSEED: editText(2); break;
+            case A_CMODE: cMode = 1 - cMode; break;
             case A_CGO: doCreate(); break;
             case A_CBACK: openWorlds(); break;
             case A_YES:
@@ -1514,6 +1616,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     }
 
     void respawn() {
+        if (dim != 0) switchDim(0);   // al morir en el Nether se vuelve al Overworld
         boolean atBed = false;
         if (bedOn) {
             px = bedX + 0.5f; pz = bedZ + 0.5f;
@@ -1576,6 +1679,10 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             if (state == ST_PLAY) {
                 if (k == 12 || k == 13) { openPause(); return; }
                 kd[k] = true;
+                if (creative && k == (layout == 0 ? 5 : 9)) {   // doble toque de salto: volar / aterrizar
+                    if (tick - jumpTick < 8) { flying = !flying; vy = 0; fallDist = 0; jumpTick = -100; }
+                    else jumpTick = tick;
+                }
                 if (k == 0) openInv(2);
                 else if (k == 11) layout = 1 - layout;
                 else if (k == 1) { sel = (sel + 8) % 9; labelT = 40; }
@@ -1585,6 +1692,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
                 if (k == 5) respawn();
             } else if (state == ST_INV) {
                 if (k == 0 || k == 12 || k == 13) closeInv();
+                else if (palMode() && (k == 1 || k == 3)) palFlip(k == 3 ? 1 : -1);
                 else if (k == 2 || k == 4 || k == 6 || k == 8) moveCursor(k);
                 else if (k == 5) click(cursor);
                 else if (k == 10) clickSecondary(cursor);
@@ -1682,6 +1790,41 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         return left;
     }
 
+    // paleta del creativo: reemplaza los 27 slots principales del inventario (tecla 1/3 cambia de pagina)
+    void initPalette() {
+        palN = 0;
+        for (int id = 1; id <= 19; id++) palIds[palN++] = id;
+        for (int id = B_COAL_ORE; id <= B_BED; id++) palIds[palN++] = id;
+        palIds[palN++] = I_DOOR;
+        palIds[palN++] = B_NETHERRACK; palIds[palN++] = B_LAVA; palIds[palN++] = B_OBSIDIAN;
+        palIds[palN++] = B_SOULSAND; palIds[palN++] = B_GLOWSTONE; palIds[palN++] = I_LIGHTER;
+        for (int id = I_STICK; id <= I_GUNPOWDER; id++) palIds[palN++] = id;
+        for (int id = I_IRON_INGOT; id <= I_DIAMOND; id++) palIds[palN++] = id;
+        for (int id = I_TOOLS; id < I_TOOLS + 16; id++) palIds[palN++] = id;
+    }
+
+    boolean palMode() { return creative && state == ST_INV && craftN == 2; }
+
+    int palAt(int slot) {
+        int k = palPage * 27 + (slot - 9);
+        return (k >= 0 && k < palN) ? palIds[k] : 0;
+    }
+
+    void palFlip(int d) {
+        int pages = (palN + 26) / 27;
+        palPage = (palPage + d + pages) % pages;
+    }
+
+    void palTake(int slot, int cnt) {
+        int pid = palAt(slot);
+        if (pid == 0) return;
+        if (heldId == pid && cnt > 1) { heldId = 0; heldCnt = 0; heldDur = 0; return; }   // mismo item: soltarlo
+        if (heldId == pid && cnt == 1 && maxStack(pid) > 1) { if (heldCnt < 64) heldCnt++; return; }
+        heldId = pid;
+        heldCnt = (maxStack(pid) > 1) ? cnt : 1;
+        heldDur = isTool(pid) ? toolMax(pid) : 0;
+    }
+
     void clearSlot(int i) {
         slId[i] = 0; slCnt[i] = 0; slDur[i] = 0;
     }
@@ -1704,7 +1847,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         for (int i = 36; i < 45; i++) {
             if (slId[i] != 0) { addItem(slId[i], slCnt[i], slDur[i]); clearSlot(i); }
         }
-        if (heldId != 0) { addItem(heldId, heldCnt, heldDur); heldId = 0; heldCnt = 0; heldDur = 0; }
+        if (heldId != 0) { if (!creative) addItem(heldId, heldCnt, heldDur); heldId = 0; heldCnt = 0; heldDur = 0; }
         clearSlot(OUT);
         state = ST_PLAY;
         clearKeys();
@@ -1828,6 +1971,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     }
 
     void click(int idx) {
+        if (palMode() && idx >= 9 && idx < 36) { palTake(idx, 64); return; }
         if (craftN == FURN && idx == 38) { takeFurnaceOut(); return; }
         if (idx == OUT) { takeOutput(); return; }
         int id = slId[idx], cnt = slCnt[idx], dur = slDur[idx];
@@ -1852,6 +1996,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     }
 
     void clickSecondary(int idx) {
+        if (palMode() && idx >= 9 && idx < 36) { palTake(idx, 1); return; }
         if (craftN == FURN && idx == 38) { takeFurnaceOut(); return; }
         if (idx == OUT) { takeOutput(); return; }
         if (heldId == 0) {
@@ -1884,12 +2029,13 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             if (state == ST_INV && craftN == FURN) { syncFromSlots(); updateFurnace(); syncToSlots(); }
             if (state != ST_PLAY) return;
             worldTime++;
-            bright = dayBright();
+            bright = (dim == 1) ? 45 : dayBright();
             if (bright < 100 && tick % 5 == 0) scanTorches();
             updateFurnace();
             updateSaplings();
             if (++autoT >= 2400) { autoT = 0; needSave = true; }
             updatePlayer();
+            updatePortal();
             updateWindow(false);
             loadMissing(1);
             updateMobs();
@@ -1900,7 +2046,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     }
 
     void hurt(int n) {
-        if (n <= 0) return;
+        if (n <= 0 || creative) return;
         health -= n;
         dmgFlash = 6;
         if (health <= 0) {
@@ -1925,11 +2071,28 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (pitch < -1.4f) pitch = -1.4f;
 
         float sn = (float) Math.sin(yaw), cs = (float) Math.cos(yaw);
+        if (creative && flying) {
+            // vuelo: avanzar sigue la mirada (arriba/abajo), saltar sube recto
+            float sp2 = SPD * 1.6f;
+            float cpc = (float) Math.cos(pitch), spc = (float) Math.sin(pitch);
+            float fmx = 0, fmy = 0, fmz = 0;
+            if (fw) { fmx += sn * cpc * sp2; fmz += cs * cpc * sp2; fmy += spc * sp2; }
+            if (bk) { fmx -= sn * cpc * sp2; fmz -= cs * cpc * sp2; fmy -= spc * sp2; }
+            if (jp) fmy += sp2;
+            if (fmx != 0 && !boxCollides(px + fmx, py, pz, HW, 1.8f)) px += fmx;
+            if (fmz != 0 && !boxCollides(px, py, pz + fmz, HW, 1.8f)) pz += fmz;
+            if (fmy != 0 && !boxCollides(px, py + fmy, pz, HW, 1.8f)) py += fmy;
+            if (py < 1f) py = 1f;
+            vy = 0; fallDist = 0; onGround = false;
+            moving = (fw || bk);
+            return;
+        }
         float mx = 0, mz = 0;
         if (fw) { mx += sn * SPD; mz += cs * SPD; }
         if (bk) { mx -= sn * SPD; mz -= cs * SPD; }
         moving = (fw || bk);
-        boolean inW = waterAtF(px, py + 0.4f, pz) || waterAtF(px, py + 1.2f, pz);
+        boolean inW = waterAtF(px, py + 0.4f, pz) || waterAtF(px, py + 1.2f, pz)
+                || lavaAtF(px, py + 0.4f, pz) || lavaAtF(px, py + 1.2f, pz);
         if (inW) { mx *= 0.5f; mz *= 0.5f; }
 
         boolean blockedX = mx != 0 && boxCollides(px + mx, py, pz, HW, 1.8f);
@@ -1988,11 +2151,11 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         }
         if (++spawnTimer >= 400) {
             spawnTimer = 0;
-            if (countMobs(false) < 10) spawnMob(rnd(3), true);
+            if (dim == 0 && countMobs(false) < 10) spawnMob(rnd(3), true);
         }
         if (bright < 70 && ++hostTimer >= 100) {
             hostTimer = 0;
-            if (countMobs(true) < 6) spawnMob(3 + rnd(2), true);
+            if (countMobs(true) < 6) spawnMob(dim == 1 ? 3 : 3 + rnd(2), true);
         }
     }
 
@@ -2057,7 +2220,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             int ix = ifloor(ex + dx * d), iy = ifloor(ey + dy * d), iz = ifloor(ez + dz * d);
             if (ix != lx || iy != ly || iz != lz) {
                 int hb = blockAt(ix, iy, iz);
-                if (hb != 0 && hb != B_WATER && hb != B_DOOR_LO && hb != B_DOOR_UO) {
+                if (hb != 0 && hb != B_WATER && hb != B_LAVA && hb != B_PORTAL && hb != B_DOOR_LO && hb != B_DOOR_UO) {
                     tx = ix; ty = iy; tz = iz;
                     ax = lx; ay = ly; az = lz;
                     tDist = d;
@@ -2099,12 +2262,12 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         int tt = toolType(tool);
         boolean right = false;
         if (b == B_STONE || b == B_COBBLE || b == B_FURNACE || b == B_SANDSTONE || b == B_ICE
-                || (b >= B_COAL_ORE && b <= B_DIAM_BLK)) {
+                || (b >= B_COAL_ORE && b <= B_DIAM_BLK) || b == B_NETHERRACK || b == B_OBSIDIAN) {
             right = (tt == 0);
             if (!right || toolLevel(tool) < needLevel(b)) { right = false; secs = hard[b] * 5f; }
         } else if (b == B_LOG || b == B_PLANKS || b == B_TABLE || isDoor(b)) {
             right = (tt == 1);
-        } else if (b == B_GRASS || b == B_DIRT || b == B_SAND || b == B_SNOW || b == B_GRAVEL) {
+        } else if (b == B_GRASS || b == B_DIRT || b == B_SAND || b == B_SNOW || b == B_GRAVEL || b == B_SOULSAND) {
             right = (tt == 2);
         }
         if (right) secs = secs / toolSpeed(tool);
@@ -2112,6 +2275,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     }
 
     void damageTool(int amount) {
+        if (creative) return;
         if (isTool(slId[sel])) {
             slDur[sel] -= amount;
             if (slDur[sel] <= 0) clearSlot(sel);
@@ -2120,6 +2284,18 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
 
     void breakBlock(int x, int y, int z) {
         int b = blockAt(x, y, z);
+        if (b == B_BEDROCK || b == B_LAVA || b == B_PORTAL) return;
+        if (creative) {   // sin botin ni desgaste de herramienta
+            if (isDoor(b)) {
+                int cly = (b == B_DOOR_UC || b == B_DOOR_UO) ? y - 1 : y;
+                if (isDoor(blockAt(x, cly, z))) setBlock(x, cly, z, 0);
+                if (isDoor(blockAt(x, cly + 1, z))) setBlock(x, cly + 1, z, 0);
+            } else {
+                if (b == B_BED && dim == 0 && bedOn && bedX == x && bedY == y && bedZ == z) { bedOn = false; say("Cama destruida: sin punto de reaparicion"); }
+                setBlock(x, y, z, 0);
+            }
+            return;
+        }
         if (isDoor(b)) {
             int ly = (b == B_DOOR_UC || b == B_DOOR_UO) ? y - 1 : y;
             if (isDoor(blockAt(x, ly, z))) setBlock(x, ly, z, 0);
@@ -2143,7 +2319,9 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         else if (b == B_GOLD_ORE) drop = (lvl >= 2) ? B_GOLD_ORE : 0;
         else if (b == B_DIAM_ORE) drop = (lvl >= 2) ? I_DIAMOND : 0;
         else if (b >= B_IRON_BLK && b <= B_DIAM_BLK) drop = (lvl >= needLevel(b)) ? b : 0;
-        if (b == B_BED && bedOn && bedX == x && bedY == y && bedZ == z) { bedOn = false; say("Cama destruida: sin punto de reaparicion"); }
+        else if (b == B_OBSIDIAN) drop = (lvl >= 3) ? b : 0;
+        else if (b == B_NETHERRACK) drop = pick ? b : 0;
+        if (b == B_BED && dim == 0 && bedOn && bedX == x && bedY == y && bedZ == z) { bedOn = false; say("Cama destruida: sin punto de reaparicion"); }
         setBlock(x, y, z, b == B_ICE ? B_WATER : 0);
         if (drop != 0) addItem(drop, 1, 0);
         if (b == B_LEAVES && rnd(8) == 0) addItem(I_APPLE, 1, 0);
@@ -2188,6 +2366,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             } else if (m.type == 3) {
                 int f = rnd(3);
                 if (f > 0) addItem(I_ROTTEN, f, 0);
+                if (dim == 1 && rnd(4) == 0) addItem(I_GOLD_INGOT, 1, 0);
             } else {
                 int f = rnd(3);
                 if (f > 0) addItem(I_GUNPOWDER, f, 0);
@@ -2214,7 +2393,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             }
             mineProg++;
             hungerTimer++;
-            int need = breakTicks(blockAt(tx, ty, tz), slId[sel]);
+            int need = creative ? 4 : breakTicks(blockAt(tx, ty, tz), slId[sel]);
             if (mineProg >= need) {
                 breakBlock(tx, ty, tz);
                 mineProg = 0;
@@ -2228,6 +2407,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     }
 
     void consumeSel() {
+        if (creative) return;
         slCnt[sel]--;
         if (slCnt[sel] <= 0) clearSlot(sel);
     }
@@ -2239,6 +2419,11 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (tx >= 0 && blockAt(tx, ty, tz) == B_TNT) { igniteTnt(tx, ty, tz, 1); return; }
         if (tx >= 0 && isDoor(blockAt(tx, ty, tz))) { toggleDoor(tx, ty, tz); return; }
         if (tx >= 0 && blockAt(tx, ty, tz) == B_BED) { useBed(tx, ty, tz); return; }
+        if (tx >= 0 && slId[sel] == I_LIGHTER) {
+            if (lightPortal(ax, ay, az)) say("Portal encendido");
+            else if (blockAt(tx, ty, tz) == B_OBSIDIAN) say("Marco de portal incompleto");
+            return;
+        }
         if (isFood(id)) {
             if (hunger < 20) {
                 hunger = Math.min(20, hunger + foodVal(id));
@@ -2253,7 +2438,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     void placeBlock(int id) {
         if (ay < 0 || ay >= H) return;
         int cur = blockAt(ax, ay, az);
-        if (cur != 0 && cur != B_WATER) return;
+        if (cur != 0 && cur != B_WATER && cur != B_LAVA) return;
         if (id == I_DOOR) {
             if (ay + 1 >= H) return;
             int up = blockAt(ax, ay + 1, az);
@@ -2278,6 +2463,12 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     }
 
     void updateSurvival() {
+        if (creative) { air = 300; airT = 0; hunger = 20; hungerFx = 0; health = 20; return; }
+        if (lavaAtF(px, py + 0.3f, pz) || lavaAtF(px, py + 1.2f, pz)) {
+            if (++lavaT >= 8) { lavaT = 0; hurt(3); }
+        } else {
+            lavaT = 0;
+        }
         if (waterAtF(px, py + EYE, pz)) {
             if (air > 0) air--;
             else if (++airT >= 20) { airT = 0; hurt(2); }
@@ -2429,6 +2620,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     }
 
     int skyColor() {
+        if (dim == 1) return 0x2A0808;
         int p = (bright - 35) * 100 / 65;
         if (p < 0) p = 0;
         if (p > 100) p = 100;
@@ -2444,7 +2636,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
                 if (cd == null) continue;
                 int base = (((x & 15) << 4) + (z & 15)) * H;
                 for (int y = 0; y < H && torchN < 16; y++) {
-                    if (cd[base + y] == B_TORCH) {
+                    if (cd[base + y] == B_TORCH || cd[base + y] == B_GLOWSTONE) {
                         torchX[torchN] = x + 0.5f; torchY[torchN] = y + 0.5f; torchZ[torchN] = z + 0.5f;
                         torchN++;
                     }
@@ -2505,6 +2697,122 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     static String cat(String a, String b) { return new StringBuffer(a).append(b).toString(); }
     static String cat(String a, int n) { return new StringBuffer(a).append(n).toString(); }
 
+    // ---------------------------------------------------------------- nether y portales
+    // vacia la ventana de chunks (lo modificado pasa a pending con la clave vieja) y cambia de dimension
+    void switchDim(int nd) {
+        for (int sl = 0; sl < nch; sl++) unloadSlot(sl);
+        mobs.removeAllElements();
+        sapN = 0; torchN = 0;
+        dim = nd;
+        portalT = 0;
+    }
+
+    boolean lavaAtF(float x, float y, float z) {
+        return blockAt(ifloor(x), ifloor(y), ifloor(z)) == B_LAVA;
+    }
+
+    int pb(int axis, int u, int y, int f) { return axis == 0 ? blockAt(u, y, f) : blockAt(f, y, u); }
+
+    // intenta encender un marco de obsidiana (interior 2-4 de ancho x 3-5 de alto) que contiene la celda de aire dada
+    boolean lightPortal(int ax0, int ay0, int az0) {
+        for (int axis = 0; axis < 2; axis++) {
+            int u = (axis == 0) ? ax0 : az0, f = (axis == 0) ? az0 : ax0, y = ay0;
+            if (pb(axis, u, y, f) != 0) continue;
+            while (y > 1 && pb(axis, u, y - 1, f) == 0) y--;
+            if (pb(axis, u, y - 1, f) != B_OBSIDIAN) continue;
+            for (int i = 0; i < 4 && pb(axis, u - 1, y, f) == 0; i++) u--;
+            int w = 0;
+            while (w < 5 && pb(axis, u + w, y, f) == 0) w++;
+            int h = 0;
+            while (h < 6 && pb(axis, u, y + h, f) == 0) h++;
+            if (w < 2 || w > 4 || h < 3 || h > 5) continue;
+            boolean ok = true;
+            for (int i = 0; i < w && ok; i++) {
+                if (pb(axis, u + i, y - 1, f) != B_OBSIDIAN || pb(axis, u + i, y + h, f) != B_OBSIDIAN) ok = false;
+                for (int j = 0; j < h && ok; j++) if (pb(axis, u + i, y + j, f) != 0) ok = false;
+            }
+            for (int j = 0; j < h && ok; j++) {
+                if (pb(axis, u - 1, y + j, f) != B_OBSIDIAN || pb(axis, u + w, y + j, f) != B_OBSIDIAN) ok = false;
+            }
+            if (!ok) continue;
+            for (int i = 0; i < w; i++) {
+                for (int j = 0; j < h; j++) {
+                    if (axis == 0) setBlock(u + i, y + j, f, B_PORTAL);
+                    else setBlock(f, y + j, u + i, B_PORTAL);
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // plataforma de obsidiana con marco 4x5 (interior 2x3) a lo largo de X
+    void buildPortal(int x, int y, int z) {
+        for (int ix = x - 1; ix <= x + 2; ix++) {
+            for (int iz = z - 1; iz <= z + 1; iz++) {
+                setBlock(ix, y - 1, iz, B_OBSIDIAN);
+                for (int iy = y; iy <= y + 3; iy++) setBlock(ix, iy, iz, 0);
+            }
+        }
+        for (int iy = y; iy <= y + 2; iy++) {
+            setBlock(x - 1, iy, z, B_OBSIDIAN);
+            setBlock(x + 2, iy, z, B_OBSIDIAN);
+            setBlock(x, iy, z, B_PORTAL);
+            setBlock(x + 1, iy, z, B_PORTAL);
+        }
+        setBlock(x, y + 3, z, B_OBSIDIAN);
+        setBlock(x + 1, y + 3, z, B_OBSIDIAN);
+    }
+
+    // cruza el portal: coordenadas 1:8, busca un portal cercano o construye uno nuevo
+    void usePortal() {
+        float nx = (dim == 0) ? px / 8f : px * 8f;
+        float nz = (dim == 0) ? pz / 8f : pz * 8f;
+        switchDim(1 - dim);
+        px = nx; pz = nz;
+        updateWindow(true);
+        loadMissing(nch);
+        int cx0 = ifloor(nx), cz0 = ifloor(nz);
+        int fx = 0, fy = -1, fz = 0;
+        for (int x = cx0 - 10; x <= cx0 + 10 && fy < 0; x++) {
+            for (int z = cz0 - 10; z <= cz0 + 10 && fy < 0; z++) {
+                if (chunkFor(x, z) == null) continue;
+                for (int y = 1; y < H - 1; y++) {
+                    if (blockAt(x, y, z) == B_PORTAL && blockAt(x, y - 1, z) == B_OBSIDIAN) { fx = x; fy = y; fz = z; break; }
+                }
+            }
+        }
+        if (fy >= 0) {
+            px = fx + 0.5f; pz = fz + 0.5f; py = fy + 0.01f;
+        } else {
+            int y;
+            if (dim == 1) {
+                y = 12;
+                for (int yy = 24; yy > 3; yy--) {
+                    if (blockAt(cx0, yy, cz0) == 0 && blockAt(cx0, yy + 1, cz0) == 0 && solidAt(cx0, yy - 1, cz0)) { y = yy; break; }
+                }
+            } else {
+                y = topY(cx0, cz0) + 1;
+                if (y < 2) y = 2;
+                if (y > H - 7) y = H - 7;
+            }
+            buildPortal(cx0, y, cz0);
+            px = cx0 + 1.0f; pz = cz0 + 0.5f; py = y + 0.01f;
+        }
+        vy = 0; fallDist = 0; onGround = false;
+        portalLock = true; portalT = 0;
+        needSave = true;
+        say(dim == 1 ? "Entraste al Nether" : "Volviste al Overworld");
+    }
+
+    void updatePortal() {
+        boolean inP = blockAt(ifloor(px), ifloor(py + 0.5f), ifloor(pz)) == B_PORTAL
+                || blockAt(ifloor(px), ifloor(py + 1.4f), ifloor(pz)) == B_PORTAL;
+        if (!inP) { portalT = 0; portalLock = false; return; }
+        if (portalLock) return;
+        if (++portalT >= (creative ? 2 : 60)) { portalT = 0; usePortal(); }
+    }
+
     // ---------------------------------------------------------------- puertas
     // orientacion derivada de las paredes vecinas (de la mitad inferior): true = el panel cerrado corre a lo largo de X
     boolean doorAlongX(int x, int ly, int z) {
@@ -2516,6 +2824,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
 
     // la cama guarda el punto de reaparicion; de noche ademas se duerme hasta la manana
     void useBed(int x, int y, int z) {
+        if (dim != 0) { say("No se puede dormir aqui"); return; }
         bedOn = true; bedX = x; bedY = y; bedZ = z;
         needSave = true;
         if ((worldTime % DAY_LEN) >= 13000) {
@@ -2605,7 +2914,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
                     int yy = cy + dy;
                     if (yy <= 0) continue;
                     int b = blockAt(cx + dx, yy, cz + dz);
-                    if (b == 0 || b == B_WATER) continue;
+                    if (b == 0 || b == B_WATER || b == B_LAVA || b == B_PORTAL || b == B_BEDROCK || b == B_OBSIDIAN) continue;
                     if (b == B_TNT) igniteTnt(cx + dx, yy, cz + dz, 50 + rnd(20));
                     else setBlock(cx + dx, yy, cz + dz, 0);
                 }
@@ -2728,7 +3037,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         }
     }
 
-    boolean opaque(int b) { return b != 0 && b != B_SAPLING && b != B_TORCH && b != B_WATER && !(b >= B_DOOR_LC && b <= B_DOOR_UO) && b != B_BED; }
+    boolean opaque(int b) { return b != 0 && b != B_SAPLING && b != B_TORCH && b != B_WATER && !(b >= B_DOOR_LC && b <= B_DOOR_UO) && b != B_BED && b != B_LAVA && b != B_PORTAL; }
 
     void faceBlock(int x, int y, int z, int f, int color, int b) {
         for (int i = 0; i < 4; i++) {
@@ -2736,6 +3045,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             toCam(x + (c & 1), y + ((c >> 1) & 1), z + ((c >> 2) & 1), quad, i * 3);
         }
         int p = litPct(x + 0.5f + NX[f], y + 0.5f + NY[f], z + 0.5f + NZ[f]);
+        if (b == B_LAVA || b == B_GLOWSTONE) p = 100;   // brillan solos
         fillPoly(quad, 4, p >= 100 ? color : shade(color, p));
         if (polyOk && b != B_WATER && b != B_SNOW) {
             float ddx = x + 0.5f - camX, ddy = y + 0.5f - camY, ddz = z + 0.5f - camZ;
@@ -2906,6 +3216,29 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             dFrame(0.05f, 0.05f, 0.95f, 0.95f, mk(cSide[b], 70));
             dFrame(0.14f, 0.14f, 0.86f, 0.86f, mk(cSide[b], 118));
             dLine(0.25f, 0.75f, 0.75f, 0.25f, mk(cSide[b], 135));
+        } else if (b == B_NETHERRACK) {
+            int d = mk(0x4A1616, 100), l = mk(0x9A4040, 100);
+            dRect(0.12f, 0.2f, 0.3f, 0.34f, d); dRect(0.6f, 0.12f, 0.8f, 0.28f, d); dRect(0.3f, 0.6f, 0.5f, 0.74f, d);
+            dRect(0.7f, 0.55f, 0.88f, 0.7f, l); dRect(0.15f, 0.78f, 0.3f, 0.9f, l);
+        } else if (b == B_LAVA) {
+            int y0 = mk(0xFFD040, 100);
+            dRect(0.15f, 0.2f, 0.4f, 0.35f, y0); dRect(0.6f, 0.15f, 0.85f, 0.3f, y0);
+            dRect(0.3f, 0.6f, 0.55f, 0.75f, y0); dRect(0.7f, 0.65f, 0.9f, 0.8f, y0);
+        } else if (b == B_OBSIDIAN) {
+            int pv = mk(0x6A3FA0, 100);
+            dLine(0.1f, 0.8f, 0.5f, 0.3f, pv); dLine(0.4f, 0.9f, 0.9f, 0.2f, pv); dLine(0.6f, 0.7f, 0.85f, 0.55f, pv);
+        } else if (b == B_SOULSAND) {
+            int d = mk(0x2E2218, 100);
+            dRect(0.15f, 0.2f, 0.3f, 0.32f, d); dRect(0.55f, 0.15f, 0.7f, 0.27f, d);
+            dRect(0.3f, 0.55f, 0.45f, 0.67f, d); dRect(0.7f, 0.6f, 0.85f, 0.72f, d);
+        } else if (b == B_GLOWSTONE) {
+            int l = mk(0xFFF0B0, 100), d = mk(0xC09A40, 100);
+            dRect(0.12f, 0.15f, 0.3f, 0.3f, l); dRect(0.6f, 0.1f, 0.78f, 0.25f, l); dRect(0.35f, 0.55f, 0.55f, 0.7f, l);
+            dRect(0.7f, 0.6f, 0.88f, 0.75f, d); dRect(0.15f, 0.7f, 0.3f, 0.85f, d);
+        } else if (b == B_BEDROCK) {
+            int d = mk(0x1A1A1A, 100), l = mk(0x6A6A6A, 100);
+            dRect(0.12f, 0.2f, 0.3f, 0.34f, d); dRect(0.6f, 0.12f, 0.8f, 0.28f, d); dRect(0.3f, 0.6f, 0.5f, 0.74f, d);
+            dRect(0.7f, 0.55f, 0.88f, 0.7f, l);
         } else if (b == B_ICE) {
             int l = mk(0xE8F6FF, 100);
             dLine(0.15f, 0.8f, 0.7f, 0.2f, l); dLine(0.35f, 0.9f, 0.85f, 0.4f, l);
@@ -3010,6 +3343,12 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             if (u == 1 || v == 1) return tint(base, 114);
             return tint(base, 96 + n / 32);
         }
+        if (b == B_NETHERRACK) return (n > 200) ? 0x4A1616 : ((n < 40) ? 0x9A4040 : tint(base, var));
+        if (b == B_LAVA) return ((u + v * 2 + n / 64) % 5 == 0) ? 0xFFD040 : tint(0xE0601A, var + 10);
+        if (b == B_OBSIDIAN) return (n > 215) ? 0x6A3FA0 : tint(base, var - 6);
+        if (b == B_SOULSAND) return (((u + v) % 3 == 0) && n > 100) ? 0x2E2218 : tint(base, var);
+        if (b == B_GLOWSTONE) return (n > 160) ? 0xFFF0B0 : ((n < 60) ? 0xC09A40 : tint(base, var + 8));
+        if (b == B_BEDROCK) return (n > 150) ? 0x1A1A1A : ((n < 60) ? 0x6A6A6A : 0x444444);
         if (b == B_SNOW) return tint(base, 96 + n / 32);
         if (b == B_GRAVEL) return (n > 170) ? 0x5E5A57 : ((n < 50) ? 0xA8A29E : tint(base, var));
         if (b == B_ICE) return ((u + v) % 5 == 0) ? 0xE8F6FF : tint(base, var + 6);
@@ -3082,6 +3421,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             for (int i = 0; i < 8; i++) g[i] = g[i].replace('L', hi).replace('l', lo);
             return g;
         }
+        if (id == I_LIGHTER) return new String[] { ".....Y..", "....YOY.", "....OOY.", "..IIIII.", "..IiiiI.", "..IIIII.", "..iiiii.", "........" };
         if (id == I_DIAMOND) return new String[] { "........", "..CCCC..", ".CWCCCC.", ".CCCCCc.", "..CCCc..", "...Cc...", "........", "........" };
         if (id == B_BED) return new String[] { "........", "........", "bWWRRRRb", "bWWRRRRb", "bRRRRRRb", "bbbbbbbb", "b......b", "b......b" };
         return null;
@@ -3098,7 +3438,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             for (int c = 0; c < 8; c++) {
                 int col;
                 if (pt != null) col = pal(pt[r].charAt(c));
-                else if (id <= 19 || (id >= B_COAL_ORE && id <= B_DIAM_BLK)) col = (r < 2) ? texBlock(id, 0, c, r + 3) : texBlock(id, 1, c, r);
+                else if (id <= 19 || (id >= B_COAL_ORE && id <= B_DIAM_BLK) || (id >= B_NETHERRACK && id <= B_OBSIDIAN) || (id >= B_SOULSAND && id <= B_BEDROCK)) col = (r < 2) ? texBlock(id, 0, c, r + 3) : texBlock(id, 1, c, r);
                 else col = icol[id];
                 px[r * 8 + c] = col;
             }
@@ -3140,7 +3480,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     }
 
     boolean showFace(int b, int n) {
-        if (b == B_WATER) return n != B_WATER && !opaque(n);
+        if (b == B_WATER || b == B_LAVA) return n != b && !opaque(n);
         return !opaque(n);
     }
 
@@ -3148,6 +3488,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (b == B_SAPLING || b == B_TORCH) { drawSmall(x, y, z, b); return; }
         if (isDoor(b)) { drawDoor(x, y, z, b); return; }
         if (b == B_BED) { drawBed(x, y, z); return; }
+        if (b == B_PORTAL) { drawPortal(x, y, z); return; }
         int[] sc = shadedCol[b];
         if (camX > x + 1 && showFace(b, blockAt(x + 1, y, z))) faceBlock(x, y, z, 0, sc[0], b);
         if (camX < x && showFace(b, blockAt(x - 1, y, z))) faceBlock(x, y, z, 1, sc[1], b);
@@ -3155,6 +3496,16 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (camY < y && showFace(b, blockAt(x, y - 1, z))) faceBlock(x, y, z, 3, sc[3], b);
         if (camZ > z + 1 && showFace(b, blockAt(x, y, z + 1))) faceBlock(x, y, z, 4, sc[4], b);
         if (camZ < z && showFace(b, blockAt(x, y, z - 1))) faceBlock(x, y, z, 5, sc[5], b);
+    }
+
+    boolean isFrameBlk(int b) { return b == B_OBSIDIAN || b == B_PORTAL; }
+
+    // panel violeta que parpadea entre dos tonos
+    void drawPortal(int x, int y, int z) {
+        boolean alongX = isFrameBlk(blockAt(x - 1, y, z)) || isFrameBlk(blockAt(x + 1, y, z));
+        int col = (((tick / 8) + x + y + z) & 1) == 0 ? 0x8A2BE2 : 0x6A1BC2;
+        if (alongX) drawBox(x, y, z + 0.4f, x + 1, y + 1, z + 0.6f, col, 100);
+        else drawBox(x + 0.4f, y, z, x + 0.6f, y + 1, z + 1, col, 100);
     }
 
     void drawBed(int x, int y, int z) {
@@ -3185,7 +3536,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     }
 
     void drawMob(Mob m) {
-        float[][] parts = mobParts(m.type);
+        float[][] parts = (m.type == 3 && dim == 1) ? pigmanParts : mobParts(m.type);
         int mpct = litPct(m.x, m.y + 0.6f, m.z);
         float cs = (float) Math.cos(m.ang), sn = (float) Math.sin(m.ang);
         for (int pi = 0; pi < parts.length; pi++) {
@@ -3373,7 +3724,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
                     c0 = c1;
                 }
             }
-            if (id <= B_ICE || (id >= B_COAL_ORE && id <= B_DIAM_BLK)) {
+            if (id <= B_ICE || (id >= B_COAL_ORE && id <= B_DIAM_BLK) || (id >= B_NETHERRACK && id <= B_OBSIDIAN) || (id >= B_SOULSAND && id <= B_BEDROCK)) {
                 gg.setColor(0x000000);
                 gg.drawRect(ox2 - 1, oy2 - 1, c * 8 + 1, c * 8 + 1);
             }
@@ -3420,6 +3771,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         gg.drawRect(hx + sel * hs, hy, hs - 1, hs - 1);
 
         int ry = hy - 9;
+        if (!creative) {
         for (int i = 0; i < 10; i++) {
             int x = hx + i * 8;
             gg.setColor(0x401010);
@@ -3438,6 +3790,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             if (hg >= 2) gg.fillRect(x, ry, 7, 7);
             else if (hg == 1) gg.fillRect(x + 3, ry, 4, 7);
         }
+        }
         if (air < 300) {
             int nbub = (air * 10 + 299) / 300;
             gg.setColor(0xA8DCFF);
@@ -3448,8 +3801,17 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             txt(names[slId[sel]], sw / 2, ry - 3, 0xFFFFFF, Graphics.BOTTOM | Graphics.HCENTER);
         }
         if (msgT > 0) txt(msg, sw / 2, sh / 4, 0xFFFF80, Graphics.TOP | Graphics.HCENTER);
+        if (creative) txt(flying ? "Creativo (vuelo)" : "Creativo", sw / 2, 2, 0xA0FFA0, Graphics.TOP | Graphics.HCENTER);
         txt(layout == 0 ? "[A]" : "[B]", sw - 3, 2, 0xFFFF55, Graphics.TOP | Graphics.RIGHT);
 
+        if (portalT > 0) {
+            int th = portalT / 4 + 2;
+            gg.setColor(0x8A2BE2);
+            gg.fillRect(0, 0, sw, th);
+            gg.fillRect(0, sh - th, sw, th);
+            gg.fillRect(0, 0, th, sh);
+            gg.fillRect(sw - th, 0, th, sh);
+        }
         if (dmgFlash > 0) {
             gg.setColor(0xFF0000);
             gg.fillRect(0, 0, sw, 4);
@@ -3462,7 +3824,10 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     void paintInv() {
         gg.setColor(0x202020);
         gg.fillRect(0, 0, sw, sh);
-        txt(craftN == FURN ? "Horno" : (craftN == 3 ? "Mesa de crafteo" : "Inventario"), sw / 2, 1, 0xFFFFFF, Graphics.TOP | Graphics.HCENTER);
+        boolean pm = palMode();
+        String ttl = craftN == FURN ? "Horno" : (craftN == 3 ? "Mesa de crafteo" : "Inventario");
+        if (pm) ttl = new StringBuffer("Creativo  [1] ").append(palPage + 1).append('/').append((palN + 26) / 27).append(" [3]").toString();
+        txt(ttl, sw / 2, 1, 0xFFFFFF, Graphics.TOP | Graphics.HCENTER);
         int s = slS;
         for (int i = 0; i < 46; i++) {
             if (!slActive[i]) continue;
@@ -3470,8 +3835,13 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             gg.fillRect(slx[i], sly[i], s, s);
             gg.setColor(0x373737);
             gg.drawRect(slx[i], sly[i], s - 1, s - 1);
-            drawIcon(slId[i], slDur[i], slx[i], sly[i], s);
-            drawCount(slCnt[i], slx[i], sly[i], s);
+            if (pm && i >= 9 && i < 36) {
+                int pid = palAt(i);
+                drawIcon(pid, isTool(pid) ? toolMax(pid) : 0, slx[i], sly[i], s);
+            } else {
+                drawIcon(slId[i], slDur[i], slx[i], sly[i], s);
+                drawCount(slCnt[i], slx[i], sly[i], s);
+            }
         }
         if (craftN == FURN) {
             int bx = slx[36] + s + 4, bw = slx[38] - bx - 4, by = sly[38] + s / 2 - 3;
@@ -3499,7 +3869,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             drawIcon(heldId, heldDur, hx, hy, s);
             drawCount(heldCnt, hx, hy, s);
         }
-        int nid = (heldId != 0) ? heldId : slId[cursor];
+        int nid = (heldId != 0) ? heldId : ((pm && cursor >= 9 && cursor < 36) ? palAt(cursor) : slId[cursor]);
         if (nid != 0) {
             String nm = names[nid];
             if (cursor == OUT && heldId == 0) nm = new StringBuffer("Resultado: ").append(nm).toString();
@@ -3653,6 +4023,8 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         btn(A_CNAME, cat("Nombre: ", cName), btnX, y, btnW, btnH);
         y += btnH + 6;
         btn(A_CSEED, cat("Semilla: ", cSeedTxt.length() == 0 ? "aleatoria" : cSeedTxt), btnX, y, btnW, btnH);
+        y += btnH + 6;
+        btn(A_CMODE, cat("Modo: ", cMode == 1 ? "Creativo" : "Supervivencia"), btnX, y, btnW, btnH);
         y += btnH + 6;
         btn(A_CGO, "Crear", btnX, y, btnW, btnH);
         btn(A_CBACK, "Atras", btnX, sh - btnH - 4, btnW, btnH);
