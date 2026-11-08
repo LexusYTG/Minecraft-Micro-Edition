@@ -1,0 +1,31 @@
+# ==========================================
+# Artefactos de compilación (C/C++, J2ME, PSP)
+# ==========================================
+
+# Directorios de compilación completos
+build/
+MMEfinal/
+# Archivos objeto y dependencias (C/C++)
+*.o
+*.d
+*.map
+*.elf
+*.elf.stripped
+*.elf.sym
+
+# Binarios finales y ROMs
+*.z64
+*.PBP
+PARAM.SFO
+
+# Compilados de Java / J2ME
+*.class
+# Nota: NO ignoramos "*.jar" globalmente para no borrar
+# las librerías internas (cldcapi11.jar, proguard.jar, etc.)
+
+# ==========================================
+# Logs y archivos temporales
+# ==========================================
+logs.txt
+*.log
+*.tmp

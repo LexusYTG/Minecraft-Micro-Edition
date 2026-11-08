@@ -1,0 +1,29 @@
+SISTEMA DE IDIOMAS - Minecraft2D
+================================
+
+Contenido del zip
+  Minecraft2D.java        el juego (ya adaptado)
+  leng/idiomas.txt        TODOS los idiomas en un solo archivo
+
+Armado
+  La carpeta leng/ tiene que quedar en la RAIZ del JAR (ruta /leng/idiomas.txt),
+  igual que si fuera res/leng/idiomas.txt en un proyecto con carpeta de recursos.
+  Si armas el JAR a mano:  jar cfm Juego.jar manifest.mf -C clases . -C <carpeta con leng> leng
+
+Agregar un idioma (sin tocar el codigo)
+  1) Arriba de todo en idiomas.txt:   lang[2]=Romana      (ID libre, de 0 a 127)
+  2) Al final: copiar el bloque [1] completo, cambiar el encabezado a [2] y traducir.
+  3) Rearmar el JAR. En el juego: Pausa > Idioma pasa por todos los idiomas de la lista.
+  Lo que falte en un idioma se muestra en espanol.
+
+IDs
+  1 a 999    interfaz       (el ID es la posicion en L_ES del .java, empezando en 1)
+  1000 + N   nombres de bloques/items (N = id del bloque; 1002 = Tierra)
+  Si se agrega un texto nuevo al codigo: ponerlo AL FINAL de L_ES (no reordenar ni borrar)
+  y sumar su linea a cada idioma de idiomas.txt.
+
+Notas
+  - El archivo es UTF-8. Acentos o cirilico dependen de que la fuente del telefono los tenga.
+  - Se corrigieron nombres que en ingles se quedaban en espanol (hilo, cana de pescar,
+    pescados, barco, alga seca, magma, ojo de arana) y avisos que nunca se traducian
+    (pesca, barco, Nether, nombres de teclas, boton Cancelar del editor de texto).

@@ -1,0 +1,7 @@
+Manifest-Version: 1.3
+MIDlet-Name: Minecraft Micro Edition
+MIDlet-Version: 1.3.0
+MIDlet-Vendor: LexusYTG
+MIDlet-1: Minecraft Micro Edition,,Minecraft2D
+MicroEdition-Configuration: CLDC-1.1
+MicroEdition-Profile: MIDP-2.0
