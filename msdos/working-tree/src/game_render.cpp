@@ -957,10 +957,13 @@ void Game::paintWorld() {
 }
 
 // ---------------------------------------------------------------- dibujo 2D
+void Game::txtR(const std::string& s, int x, int y, int c, int anchor) {   // sin traducir (ya traducido o texto del usuario)
+    text(s.c_str(), x + 1, y + 1, 0x000000, anchor);
+    text(s.c_str(), x, y, c, anchor);
+}
+
 void Game::txt(const std::string& s, int x, int y, int c, int anchor) {
-    std::string ls = L(s);
-    text(ls.c_str(), x + 1, y + 1, 0x000000, anchor);
-    text(ls.c_str(), x, y, c, anchor);
+    txtR(L(s), x, y, c, anchor);
 }
 
 void Game::drawIcon(int id, int dur, int x, int y, int s) {
@@ -1048,8 +1051,8 @@ void Game::paintHud() {
         for (int i = 0; i < nbub; i++) rect(hx + 9 * hs - 10 - i * 11, ry - 14, 9, 9, 0xA8DCFF);
     }
     if (hungerFx > 0) txt("Hambre", hx + 9 * hs, ry - 3, 0x9ACD32, TA_BOTTOM | TA_RIGHT);
-    if (labelT > 0 && slId[sel] != 0) txt(names[slId[sel]], sw / 2, ry - 4, 0xFFFFFF, TA_BOTTOM | TA_HCENTER);
-    if (msgT > 0) txt(msg, sw / 2, sh / 4, 0xFFFF80, TA_TOP | TA_HCENTER);
+    if (labelT > 0 && slId[sel] != 0) txtR(names[slId[sel]], sw / 2, ry - 4, 0xFFFFFF, TA_BOTTOM | TA_HCENTER);
+    if (msgT > 0) txtR(msg, sw / 2, sh / 4, 0xFFFF80, TA_TOP | TA_HCENTER);
     if (creative) txt(flying ? "Creativo (vuelo)" : "Creativo", sw / 2, touch ? tcSb + 6 : 2, 0xA0FFA0, TA_TOP | TA_HCENTER);
 
     if (portalT > 0) {
@@ -1071,10 +1074,10 @@ void Game::paintHud() {
 void Game::paintInv() {
     clear(0x202020);
     bool pm = palMode();
-    std::string ttl = craftN == CHEST ? "Cofre" : (craftN == FURN ? "Horno" : (craftN == 3 ? "Mesa de crafteo" : "Inventario"));
-    if (pm) ttl = fmt("Creativo  [L] %d/%d [R]", palPage + 1, (palN + 26) / 27);
-    if (craftN == TRADE) ttl = "Aldeano  [L][R] lista";
-    txt(ttl, sw / 2, 1, 0xFFFFFF, TA_TOP | TA_HCENTER);
+    std::string ttl = L(craftN == CHEST ? "Cofre" : (craftN == FURN ? "Horno" : (craftN == 3 ? "Mesa de crafteo" : "Inventario")));
+    if (pm) ttl = fmt("%s  [L] %d/%d [R]", L("Creativo").c_str(), palPage + 1, (palN + 26) / 27);
+    if (craftN == TRADE) ttl = L("Aldeano  [L][R] lista");
+    txtR(ttl, sw / 2, 1, 0xFFFFFF, TA_TOP | TA_HCENTER);
     int s = slS;
     for (int i = 0; i < NSLOT; i++) {
         if (!slActive[i]) continue;
@@ -1114,8 +1117,8 @@ void Game::paintInv() {
     int nid = (heldId != 0) ? heldId : ((pm && cursor >= 9 && cursor < 36) ? palAt(cursor) : slId[cursor]);
     if (nid != 0) {
         std::string nm = names[nid];
-        if (cursor == OUT && heldId == 0) nm = "Resultado: " + nm;
-        txt(nm, sw / 2, sh - 2, 0xFFFFFF, TA_BOTTOM | TA_HCENTER);
+        if (cursor == OUT && heldId == 0) nm = L("Resultado: ") + nm;
+        txtR(nm, sw / 2, sh - 2, 0xFFFFFF, TA_BOTTOM | TA_HCENTER);
     }
     if (pm && touch) paintPalBtns();
     if (touch) { layoutTouch(); paintInvBtn(true); }
@@ -1175,7 +1178,7 @@ void Game::dimScreen() { rect(0, 0, sw, sh, 0x000000, 0x90); }   // oscurece lo 
 
 void Game::title(const std::string& s, int y, int col, int shadow) {
     std::string ls = L(s);
-    txt(ls, sw / 2 + 1, y + 2, shadow, TA_TOP | TA_HCENTER);
+    txtR(ls, sw / 2 + 1, y + 2, shadow, TA_TOP | TA_HCENTER);
     text(ls.c_str(), sw / 2 + 1, y, col, TA_TOP | TA_HCENTER);
     text(ls.c_str(), sw / 2, y, col, TA_TOP | TA_HCENTER);
 }
@@ -1223,7 +1226,7 @@ void Game::drawBtn(int x, int y, int w, int h, const std::string& label, bool on
     rect(x + 1, y + 1, 2, h - 2, hi);
     rect(x + 1, y + h - 3, w - 2, 2, lo);
     rect(x + w - 3, y + 1, 2, h - 2, lo);
-    txt(fit(label, w - 8), x + w / 2, y + (h - FONT_H) / 2, on ? 0xFFFFA0 : 0xFFFFFF, TA_TOP | TA_HCENTER);
+    txtR(fit(label, w - 8), x + w / 2, y + (h - FONT_H) / 2, on ? 0xFFFFA0 : 0xFFFFFF, TA_TOP | TA_HCENTER);
 }
 
 void Game::btn(int id, const std::string& label, int x, int y, int w, int h) {
@@ -1238,9 +1241,9 @@ void Game::paintMenu() {
     int y0 = (sh / 14 > 6 ? sh / 14 : 6);
     drawLogo(y0);
     int y = y0 + 5 * 5 + 6 + FONT_H + (sh / 12 > 10 ? sh / 12 : 10) + 10;
-    btn(A_PLAY, "Jugar", btnX, y, btnW, btnH);
+    btn(A_PLAY, L("Jugar"), btnX, y, btnW, btnH);
     y += btnH + 8;
-    btn(A_QUIT, "Salir", btnX, y, btnW, btnH);
+    btn(A_QUIT, L("Salir"), btnX, y, btnW, btnH);
     txt("A: aceptar   B: atras   Start: pausa", sw / 2, sh - 3, 0xB0B0B0, TA_BOTTOM | TA_HCENTER);
 }
 
@@ -1250,9 +1253,9 @@ void Game::paintWorlds() {
     drawDirt(50);
     title("Selecciona un mundo", 4, 0xFFFFFF, 0x202020);
     int y0 = 4 + 12 + 6;
-    btn(A_NEW, "+ Crear mundo nuevo", btnX, y0, btnW, btnH);
+    btn(A_NEW, L("+ Crear mundo nuevo"), btnX, y0, btnW, btnH);
     int backY = sh - btnH - 4;
-    btn(A_WBACK, "Atras", btnX, backY, btnW, btnH);
+    btn(A_WBACK, L("Atras"), btnX, backY, btnW, btnH);
     int top = y0 + btnH + 6, bot = backY - 4, step = btnH + 3;
     int n = (int)worlds.size();
     if (n > 70) n = 70;
@@ -1290,14 +1293,14 @@ void Game::paintCreate() {
     drawDirt(50);
     title("Crear mundo nuevo", 4, 0xFFFFFF, 0x202020);
     int y = 4 + 12 + 14;
-    btn(A_CNAME, "Nombre: " + fit(cName, btnW - 80), btnX, y, btnW, btnH);
+    btn(A_CNAME, L("Nombre: ") + fit(cName, btnW - 80), btnX, y, btnW, btnH);
     y += btnH + 6;
-    btn(A_CSEED, "Semilla: " + (cSeedRandom ? std::string("aleatoria") : fmt("%d", cSeed)), btnX, y, btnW, btnH);
+    btn(A_CSEED, L("Semilla: ") + (cSeedRandom ? L("aleatoria") : fmt("%d", cSeed)), btnX, y, btnW, btnH);
     y += btnH + 6;
-    btn(A_CMODE, std::string("Modo: ") + (cMode == 1 ? "Creativo" : "Supervivencia"), btnX, y, btnW, btnH);
+    btn(A_CMODE, L("Modo: ") + L(cMode == 1 ? "Creativo" : "Supervivencia"), btnX, y, btnW, btnH);
     y += btnH + 6;
-    btn(A_CGO, "Crear", btnX, y, btnW, btnH);
-    btn(A_CBACK, "Atras", btnX, sh - btnH - 4, btnW, btnH);
+    btn(A_CGO, L("Crear"), btnX, y, btnW, btnH);
+    btn(A_CBACK, L("Atras"), btnX, sh - btnH - 4, btnW, btnH);
     txt("Semilla: X alterna, Izq/Der +-1, L/R +-1000", sw / 2, sh - btnH - 4 - 2, 0xB0B0B0, TA_BOTTOM | TA_HCENTER);
 }
 
@@ -1309,13 +1312,13 @@ void Game::paintConfirm() {
     int y = sh / 5;
     title("Borrar mundo?", y, 0xFFFFFF, 0x202020);
     y += 12 + 8;
-    txt(fit(nm, sw - 10), sw / 2, y, 0xFFFF80, TA_TOP | TA_HCENTER);
+    txtR(fit(nm, sw - 10), sw / 2, y, 0xFFFF80, TA_TOP | TA_HCENTER);
     y += FONT_H + 2;
     txt("No se puede deshacer", sw / 2, y, 0xFF8080, TA_TOP | TA_HCENTER);
     y += FONT_H + 14;
-    btn(A_YES, "Si, borrar", btnX, y, btnW, btnH);
+    btn(A_YES, L("Si, borrar"), btnX, y, btnW, btnH);
     y += btnH + 8;
-    btn(A_NO, "Cancelar", btnX, y, btnW, btnH);
+    btn(A_NO, L("Cancelar"), btnX, y, btnW, btnH);
 }
 
 void Game::paintPause() {
@@ -1327,11 +1330,11 @@ void Game::paintPause() {
     if (y < 2) y = 2;
     title("Juego en pausa", y, 0xFFFFFF, 0x202020);
     y += 12 + 14;
-    btn(A_RESUME, "Reanudar", btnX, y, btnW, btnH);
+    btn(A_RESUME, L("Reanudar"), btnX, y, btnW, btnH);
     y += btnH + 8;
-    btn(A_SETTINGS, "Ajustes", btnX, y, btnW, btnH);
+    btn(A_SETTINGS, L("Ajustes"), btnX, y, btnW, btnH);
     y += btnH + 8;
-    btn(A_TOMENU, "Menu principal", btnX, y, btnW, btnH);
+    btn(A_TOMENU, L("Menu principal"), btnX, y, btnW, btnH);
     if (storeBroken) txt("No se pudo guardar!", sw / 2, y + btnH + 4, 0xFF5555, TA_TOP | TA_HCENTER);
 }
 
@@ -1344,15 +1347,15 @@ void Game::paintSettings() {
     if (y < 2) y = 2;
     title("Ajustes", y, 0xFFFFFF, 0x202020);
     y += 12 + 14;
-    btn(A_RD, fmt("Render: %s (%d)", L(RD_NAME[rdIdx]).c_str(), RD_OPT[rdIdx]), btnX, y, btnW, btnH);
+    btn(A_RD, fmt("%s%s (%d)", L("Render: ").c_str(), L(RD_NAME[rdIdx]).c_str(), RD_OPT[rdIdx]), btnX, y, btnW, btnH);
     y += btnH + 8;
     txt("Izq / Der o A: cambiar", sw / 2, y, 0xDDDDDD, TA_TOP | TA_HCENTER);
     y += FONT_H;
     txt("Mas lejos = mas lento", sw / 2, y, 0xDDDDDD, TA_TOP | TA_HCENTER);
     y += FONT_H + 8;
-    btn(A_LANG, lang ? "Language: English" : "Idioma: Espanol", btnX, y, btnW, btnH);
+    btn(A_LANG, L("Idioma: ") + langNames[langPos() < 0 ? 0 : langPos()], btnX, y, btnW, btnH);
     y += btnH + 8;
-    btn(A_SETBACK, "Atras", btnX, y, btnW, btnH);
+    btn(A_SETBACK, L("Atras"), btnX, y, btnW, btnH);
 }
 
 void Game::paintDead() {

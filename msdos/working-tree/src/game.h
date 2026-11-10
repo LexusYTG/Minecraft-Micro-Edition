@@ -9,6 +9,7 @@
 #include <stdarg.h>
 #include <string>
 #include <vector>
+#include <map>
 #include <initializer_list>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -52,6 +53,9 @@ static const int MAXC = 9;             // maximo 3x3 chunks en RAM
 
 static const int RD_OPT[5] = { 4, 7, 10, 13, 15 };
 static const char* const RD_NAME[5] = { "Minima", "Normal", "Lejos", "Muy lejos", "Extrema" };
+
+// sistema de idiomas (mismo archivo leng/idiomas.txt que la version Java)
+static const int NAME_BASE = 1000, TX_MAX = NAME_BASE + 128, MAX_LANGS = 32;
 
 enum { ST_MENU, ST_PLAY, ST_INV, ST_DEAD, ST_PAUSE, ST_SET, ST_WORLDS, ST_CREATE, ST_CONFIRM };
 enum { A_PLAY = 1, A_QUIT, A_RESUME, A_SETTINGS, A_TOMENU, A_RD, A_SETBACK, A_NEW, A_WBACK,
@@ -257,6 +261,14 @@ public:
     bool curLeaf;
     std::string namesEs[128];
 
+    // ---- idiomas (ver applyLang en game_world.cpp)
+    int langN, lfSec;                        // cantidad de idiomas en la lista / bloque actual al leer el archivo
+    int langIds[MAX_LANGS];                  // ID de cada idioma (el de lang[ID] en el archivo)
+    std::string langNames[MAX_LANGS];
+    bool langListed;
+    std::string ltxt[TX_MAX];                // textos del idioma activo por ID ("" = usar el original)
+    std::map<std::string, int> txKey;        // texto original (espanol) -> ID
+
     // =============================================================== metodos
     Game();
     void init(const char* argv0);
@@ -305,6 +317,11 @@ public:
     void clearChests(); void writeChests(); void loadChests();
     std::string L(const std::string& t);
     void applyLang();
+    int langPos();
+    void nextLang();
+    bool loadLangData(std::string& out);
+    void readLangFile(bool list, int id);
+    bool langLine(const std::string& line, bool list, int id);
     int texBlock0(int b, int face, int u, int v);
 
     // tablas
@@ -478,7 +495,8 @@ public:
     void drawWire(int x, int y, int z);
     void buildOrder(int* o, int n, int c);
     void paintWorld();
-    void txt(const std::string& s, int x, int y, int c, int anchor);
+    void txt(const std::string& s, int x, int y, int c, int anchor);    // traduce con L()
+    void txtR(const std::string& s, int x, int y, int c, int anchor);   // texto ya traducido / del usuario
     void drawIcon(int id, int dur, int x, int y, int s);
     void drawCount(int cnt, int x, int y, int s);
     void paintHud(); void paintInv();

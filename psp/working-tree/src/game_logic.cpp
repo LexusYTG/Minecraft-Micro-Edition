@@ -41,7 +41,7 @@ void Game::openWorlds() {
 }
 
 void Game::openCreate() {
-    cName = fmt("Mundo %d", nextId());
+    cName = L("Mundo ") + fmt("%d", nextId());
     cSeedRandom = true; cSeed = 0;
     cMode = 0;
     go(ST_CREATE);
@@ -86,7 +86,7 @@ void Game::activate(int id) {
         case A_SETTINGS: go(ST_SET); break;
         case A_TOMENU: job = J_LEAVE; break;
         case A_RD: rdStep(1); break;
-        case A_LANG: lang = 1 - lang; applyLang(); saveSettings(); break;
+        case A_LANG: nextLang(); applyLang(); saveSettings(); break;
         case A_SETBACK: closeSettings(); break;
         case A_NEW: openCreate(); break;
         case A_WBACK: openMain(); break;
@@ -533,8 +533,8 @@ void Game::runJobs() {
     if (j == 0) return;
     job = 0;
     if (j == J_NAME) {                          // editor de texto del sistema (bloquea hasta aceptar o cancelar)
-        std::string s = oskEdit("Nombre del mundo", cName, 20);
-        if (s.empty()) s = fmt("Mundo %d", nextId());
+        std::string s = oskEdit(L("Nombre del mundo").c_str(), cName, 20);
+        if (s.empty()) s = L("Mundo ") + fmt("%d", nextId());
         cName = s;
         return;
     }

@@ -29,10 +29,12 @@ if proot-distro login ubuntu -- bash -c "
     else
         exit 1
     fi
+    mkdir -p $FINAL_DIR/leng
+    cp $SRC_DIR/leng/idiomas.txt $FINAL_DIR/leng/idiomas.txt || exit 1
     chmod -R 777 $FINAL_DIR $BUILD_DIR
 "; then
     echo "[2/2] Empaquetado completado."
-    echo "✅ Éxito: $FINAL_DIR/mme.exe"
+    echo "✅ Éxito: $FINAL_DIR/mme.exe (+ $FINAL_DIR/leng/idiomas.txt, copiar la carpeta leng junto al .exe)"
 else
     echo "❌ ERROR: Falló la compilación para MS-DOS."
     echo "📄 --- LOG DE ERRORES ---"

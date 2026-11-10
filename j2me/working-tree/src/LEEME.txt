@@ -10,6 +10,11 @@ Armado
   igual que si fuera res/leng/idiomas.txt en un proyecto con carpeta de recursos.
   Si armas el JAR a mano:  jar cfm Juego.jar manifest.mf -C clases . -C <carpeta con leng> leng
 
+Idiomas incluidos (ID: nombre)
+  0 Espanol, 1 English, 2 Eesti, 3 Russkij, 4 Romana, 5 Polski, 6 Portugues
+  Las traducciones nuevas (2 a 6) son mias: conviene que un hablante nativo las revise,
+  sobre todo el estonio. Cada linea del archivo tiene como comentario el texto original.
+
 Agregar un idioma (sin tocar el codigo)
   1) Arriba de todo en idiomas.txt:   lang[2]=Romana      (ID libre, de 0 a 127)
   2) Al final: copiar el bloque [1] completo, cambiar el encabezado a [2] y traducir.
@@ -23,7 +28,10 @@ IDs
   y sumar su linea a cada idioma de idiomas.txt.
 
 Notas
-  - El archivo es UTF-8. Acentos o cirilico dependen de que la fuente del telefono los tenga.
+  - El archivo es UTF-8. Acentos o cirilico dependen de que la fuente del telefono los tenga
+    (el estonio usa a, o, u con dieresis y o con tilde; el polaco y el rumano usan letras de Latin-2).
+    Si en algun telefono se ven cuadrados, probar ese idioma ahi.
+  - Algunos textos quedan mas largos que en espanol: si un boton se desborda, acortar la linea.
   - Se corrigieron nombres que en ingles se quedaban en espanol (hilo, cana de pescar,
     pescados, barco, alga seca, magma, ojo de arana) y avisos que nunca se traducian
     (pesca, barco, Nether, nombres de teclas, boton Cancelar del editor de texto).

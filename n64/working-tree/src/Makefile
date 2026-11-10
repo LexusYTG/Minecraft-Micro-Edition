@@ -14,6 +14,15 @@ all: Minecraft64.z64
 
 Minecraft64.z64: N64_ROM_TITLE = "Minecraft ME"
 
+# Sistema de idiomas: leng/idiomas.txt (el mismo archivo de la version Java) se mete en la ROM como sistema
+# de archivos DFS; el juego lo lee como "rom:/idiomas.txt" (si no estuviera, prueba sd:/MC64/leng/idiomas.txt).
+$(BUILD_DIR)/Minecraft64.dfs: leng/idiomas.txt
+	@mkdir -p $(dir $@)
+	@echo "    [DFS] $@"
+	$(N64_MKDFS) $@ leng
+
+Minecraft64.z64: $(BUILD_DIR)/Minecraft64.dfs
+
 $(BUILD_DIR)/Minecraft64.elf: $(OBJS)
 
 clean:

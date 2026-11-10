@@ -48,6 +48,8 @@ Game::Game() {
     nrec = 0;
     for (int i = 0; i < 128; i++) iconOk[i] = false;
     openChest = -1; tSel = 0; vilX = vilZ = vilY = vilN = 0; curWv = 0; curLeaf = false; lang = 0;
+    langN = 0; lfSec = -1; langListed = false;
+    for (int i = 0; i < MAX_LANGS; i++) langIds[i] = 0;
     for (int i = 0; i < MAX_CHESTS; i++) cUsed[i] = false;
     dbg = true; dbgT0 = 0; dbgFrames = dbgFps = 0;
     for (int i = 0; i < 64; i++) { mobKey[i] = 0; mobOrd[i] = 0; }
@@ -1158,7 +1160,7 @@ void Game::loadSettings() {
         int c = fgetc(f);
         if (c >= 0 && c < 5) rdIdx = c;
         int l = fgetc(f);
-        lang = (l == 1) ? 1 : 0;
+        lang = (l >= 0 && l < 128) ? l : 0;   // ID de idioma; applyLang() lo valida
         fclose(f);
     }
     rdApplied = rdIdx;
@@ -1401,62 +1403,290 @@ void Game::loadChests() {
     fclose(f);
 }
 
+// ---------------------------------------------------------------- idiomas
+// Mismo sistema que la version Java (Minecraft2D.java): TODOS los idiomas viven en UN archivo,
+// leng/idiomas.txt (el formato esta explicado en el propio archivo y es el mismo en todas las
+// plataformas). Para agregar un idioma solo se edita ese archivo, no este codigo.
+//
+// L_ES = textos originales en espanol. Sirven de clave en el codigo (L("Jugar")) y de respaldo si a un
+// idioma le falta una linea. El ID de cada texto en idiomas.txt es su posicion + 1:
+//   NO reordenar ni borrar entradas; un texto nuevo se agrega AL FINAL y tambien a cada idioma del archivo.
+// IDs 1..999 = interfaz; NAME_BASE + id de bloque/item (1000..1127) = nombres.
+// Los IDs 1..95 son los de la version Java (algunos solo los usa esa version: teclado numerico, pantalla de
+// controles); del 96 en adelante son textos de los gamepads (PSP / N64 / MS-DOS) que Java no usa.
 static const char* const L_ES[] = {
-    "Jugar", "Salir", "Selecciona un mundo", "+ Crear mundo nuevo", "Atras", "No hay mundos todavia",
-    "Crear mundo nuevo", "Nombre: ", "Semilla: ", "aleatoria", "Modo: ", "Creativo", "Supervivencia", "Crear",
-    "Borrar mundo?", "No se puede deshacer", "Si, borrar", "Cancelar", "Juego en pausa", "Reanudar", "Ajustes",
-    "Menu principal", "No se pudo guardar!", "Minima", "Lejos", "Muy lejos", "Extrema", "Mas lejos = mas lento",
-    "MORISTE", "Hambre", "Creativo (vuelo)", "Cofre", "Horno", "Mesa de crafteo", "Inventario", "Aldeano",
-    "Resultado: ", "Cargando mundo...", "Cargando...", "Guardando...", "Nombre del mundo", "Semilla (vacio = aleatoria)",
-    "Reapareciste en tu cama", "Tu cama fue destruida", "El cofre no esta vacio", "Cama destruida: sin punto de reaparicion",
-    "Portal encendido", "Marco de portal incompleto", "Limite de cofres alcanzado (64)", "No se puede dormir aqui",
-    "Dormiste hasta la manana", "Punto de reaparicion guardado", "Izq / Der o X: cambiar", "Entraste al Nether",
-    "Volviste al Overworld", "Aldeano  [L][R] lista", "Creativo  [L]",
-    "Sedal lanzado", "Apunta al agua", "Pescaste algo!", "Se escapo", "Nada todavia", "Pica! Clic ya",
-    "El barco se hundio!", "Montaste el barco"
+    "Jugar",   // 1
+    "Salir",   // 2
+    "En juego: L o R = pausa",   // 3
+    "Selecciona un mundo",   // 4
+    "+ Crear mundo nuevo",   // 5
+    "Atras",   // 6
+    "No hay mundos todavia",   // 7
+    "Crear mundo nuevo",   // 8
+    "Nombre: ",   // 9
+    "Semilla: ",   // 10
+    "aleatoria",   // 11
+    "Modo: ",   // 12
+    "Creativo",   // 13
+    "Supervivencia",   // 14
+    "Crear",   // 15
+    "Borrar mundo?",   // 16
+    "No se puede deshacer",   // 17
+    "Si, borrar",   // 18
+    "Cancelar",   // 19
+    "Juego en pausa",   // 20
+    "Reanudar",   // 21
+    "Ajustes",   // 22
+    "Menu principal",   // 23
+    "No se pudo guardar!",   // 24
+    "Minima",   // 25
+    "Lejos",   // 26
+    "Muy lejos",   // 27
+    "Extrema",   // 28
+    "4 / 6 o 5: cambiar",   // 29
+    "Mas lejos = mas lento",   // 30
+    "MORISTE",   // 31
+    "5: reaparecer",   // 32
+    "Hambre",   // 33
+    "Creativo (vuelo)",   // 34
+    "Cofre",   // 35
+    "Horno",   // 36
+    "Mesa de crafteo",   // 37
+    "Inventario",   // 38
+    "Aldeano  [1][3] lista",   // 39
+    "Resultado: ",   // 40
+    "Cargando mundo...",   // 41
+    "Cargando...",   // 42
+    "Guardando...",   // 43
+    "Mundo ",   // 44
+    "Nombre del mundo",   // 45
+    "Semilla (vacio = aleatoria)",   // 46
+    "Reapareciste en tu cama",   // 47
+    "Tu cama fue destruida",   // 48
+    "El cofre no esta vacio",   // 49
+    "Cama destruida: sin punto de reaparicion",   // 50
+    "Portal encendido",   // 51
+    "Marco de portal incompleto",   // 52
+    "Limite de cofres alcanzado (64)",   // 53
+    "No se pudo leer el cofre",   // 54
+    "Error al guardar el cofre",   // 55
+    "No se puede dormir aqui",   // 56
+    "Dormiste hasta la manana",   // 57
+    "Punto de reaparicion guardado",   // 58
+    "Toca: reaparecer",   // 59
+    "Controles",   // 60
+    "Restaurar",   // 61
+    "Adelante",   // 62
+    "Retroceder",   // 63
+    "Girar izq.",   // 64
+    "Girar der.",   // 65
+    "Saltar",   // 66
+    "Mirar arriba",   // 67
+    "Mirar abajo",   // 68
+    "Romper / colocar",   // 69
+    "Hotbar anterior",   // 70
+    "Hotbar siguiente",   // 71
+    "Pausa",   // 72
+    "Pulsa una tecla",   // 73
+    "Tecla repetida!",   // 74
+    "5: elegir y pulsa una tecla",   // 75
+    "El barco se hundio!",   // 76
+    "Montaste el barco",   // 77
+    "Sedal lanzado",   // 78
+    "Apunta al agua",   // 79
+    "Pescaste algo!",   // 80
+    "Se escapo",   // 81
+    "Nada todavia",   // 82
+    "Pica! Clic ya",   // 83
+    "Entraste al Nether",   // 84
+    "Volviste al Overworld",   // 85
+    "Idioma: ",   // 86
+    "Render: ",   // 87
+    "Normal",   // 88
+    "2/Arr",   // 89
+    "4/Izq",   // 90
+    "5/OK",   // 91
+    "6/Der",   // 92
+    "8/Abj",   // 93
+    "L / Izq",   // 94
+    "R / Der",   // 95
+    "X: aceptar   O: atras   Start: pausa en juego",   // 96   // gamepads
+    "A: aceptar   B: atras   Start: pausa",   // 97   // gamepads
+    "Cuadrado: borrar mundo",   // 98   // gamepads
+    "Z: borrar mundo",   // 99   // gamepads
+    "Semilla: X alterna, Izq/Der +-1, L/R +-1000",   // 100   // gamepads
+    "Izq / Der o X: cambiar",   // 101   // gamepads
+    "Izq / Der o A: cambiar",   // 102   // gamepads
+    "X: reaparecer",   // 103   // gamepads
+    "A: reaparecer",   // 104   // gamepads
+    "Aldeano  [L][R] lista"   // 105   // gamepads
 };
-static const char* const L_EN[] = {
-    "Play", "Quit", "Select a world", "+ Create new world", "Back", "No worlds yet",
-    "Create new world", "Name: ", "Seed: ", "random", "Mode: ", "Creative", "Survival", "Create",
-    "Delete world?", "This cannot be undone", "Yes, delete", "Cancel", "Game paused", "Resume", "Settings",
-    "Main menu", "Could not save!", "Minimum", "Far", "Very far", "Extreme", "Farther = slower",
-    "YOU DIED", "Hunger", "Creative (flying)", "Chest", "Furnace", "Crafting Table", "Inventory", "Villager",
-    "Result: ", "Loading world...", "Loading...", "Saving...", "World name", "Seed (empty = random)",
-    "You respawned in your bed", "Your bed was destroyed", "The chest is not empty", "Bed destroyed: no respawn point",
-    "Portal lit", "Portal frame incomplete", "Chest limit reached (64)", "You cannot sleep here",
-    "You slept until morning", "Respawn point saved", "Left / Right or X: change", "You entered the Nether",
-    "Back in the Overworld", "Villager  [L][R] list", "Creative  [L]",
-    "Line cast", "Aim at the water", "You caught something!", "It got away", "Nothing yet", "Bite! Click now",
-    "The boat sank!", "You boarded the boat"
-};
+static const int L_ES_N = (int)(sizeof(L_ES) / sizeof(L_ES[0]));
+
+static std::string trimWs(const std::string& s) {
+    size_t a = s.find_first_not_of(" \t\r\n");
+    if (a == std::string::npos) return std::string();
+    size_t b = s.find_last_not_of(" \t\r\n");
+    return s.substr(a, b - a + 1);
+}
+
+// quita espacios y el comentario del final (un '#' precedido de espacio o tab)
+static std::string langTrim(const std::string& in) {
+    std::string s = trimWs(in);
+    for (size_t i = 1; i < s.size(); i++) {
+        if (s[i] == '#' && (s[i - 1] == ' ' || s[i - 1] == '\t')) return trimWs(s.substr(0, i));
+    }
+    return s;
+}
+
+static int langNum(const std::string& in) {
+    std::string s = trimWs(in);
+    size_t n = s.size();
+    if (n == 0 || n > 5) return -2;
+    int v = 0;
+    for (size_t i = 0; i < n; i++) {
+        char c = s[i];
+        if (c < '0' || c > '9') return -2;
+        v = v * 10 + (c - '0');
+    }
+    return v;
+}
+
+// UTF-8 -> ASCII. Las fuentes de las consolas solo tienen los glifos ASCII 32..127 (1 byte = 1 glifo), asi que
+// las letras con acento se dibujan sin acento (a, e, n, u...) y cualquier otro caracter se muestra como '?'.
+static std::string utf8Fold(const std::string& s) {
+    static const char* const LAT1 =   // U+00C0..U+00FF
+        "AAAAAAACEEEEIIII" "DNOOOOOxOUUUUYTs" "aaaaaaaceeeeiiii" "dnooooo/ouuuuyty";
+    std::string r;
+    size_t n = s.size(), i = 0;
+    r.reserve(n);
+    while (i < n) {
+        int c = (unsigned char)s[i++];
+        int cp = 0;
+        if (c < 0x80) { r += (char)c; continue; }
+        if (c >= 0xC0 && c < 0xE0 && i < n) {
+            cp = ((c & 0x1F) << 6) | ((unsigned char)s[i] & 0x3F);
+            i += 1;
+        } else if (c >= 0xE0 && c < 0xF0 && i + 1 < n) {
+            cp = ((c & 0x0F) << 12) | (((unsigned char)s[i] & 0x3F) << 6) | ((unsigned char)s[i + 1] & 0x3F);
+            i += 2;
+        } else if (c >= 0xF0 && c < 0xF8) {
+            i += 3;
+            if (i > n) i = n;
+            r += '?';
+            continue;
+        } else {
+            r += '?';
+            continue;
+        }
+        if (cp >= 0xC0 && cp <= 0xFF) r += LAT1[cp - 0xC0];
+        else r += '?';
+    }
+    return r;
+}
+
+static bool readWholeFile(const std::string& path, std::string& out) {
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) return false;
+    char buf[1024];
+    size_t n;
+    out.clear();
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) out.append(buf, n);
+    fclose(f);
+    return !out.empty();
+}
+
+// Donde esta el archivo de idiomas: carpeta leng\ junto al ejecutable (directorio actual) -> leng/idiomas.txt
+bool Game::loadLangData(std::string& out) {
+    return readWholeFile("leng/idiomas.txt", out) || readWholeFile(baseDir + "leng/idiomas.txt", out);
+}
 
 std::string Game::L(const std::string& t) {
-    if (lang == 0) return t;
-    for (size_t i = 0; i < sizeof(L_ES) / sizeof(L_ES[0]); i++) if (t == L_ES[i]) return L_EN[i];
-    return t;
+    if (t.empty() || txKey.empty()) return t;
+    std::map<std::string, int>::const_iterator it = txKey.find(t);
+    if (it == txKey.end()) return t;
+    const std::string& s = ltxt[it->second];
+    if (s.empty()) return t;
+    if (t[t.size() - 1] == ' ' && s[s.size() - 1] != ' ') return s + " ";
+    return s;
+}
+
+int Game::langPos() {
+    for (int i = 0; i < langN; i++) if (langIds[i] == lang) return i;
+    return -1;
+}
+
+void Game::nextLang() {
+    lang = langIds[(langPos() + 1) % langN];
 }
 
 void Game::applyLang() {
     static bool saved = false;
+    if (txKey.empty()) {
+        for (int i = 0; i < L_ES_N; i++) if (txKey.find(L_ES[i]) == txKey.end()) txKey[L_ES[i]] = i + 1;
+    }
+    if (!langListed) {
+        langListed = true;
+        readLangFile(true, -1);
+        if (langN == 0) { langN = 1; langIds[0] = 0; langNames[0] = "Espanol"; }
+    }
+    if (langPos() < 0) lang = langIds[0];
     if (!saved) { for (int i = 0; i < 128; i++) namesEs[i] = names[i]; saved = true; }
-    for (int i = 0; i < 128; i++) names[i] = namesEs[i];
-    if (lang == 0) return;
-    static const char* const e[] = { "", "Grass", "Dirt", "Stone", "Log", "Leaves", "Planks", "Crafting Table", "Cobblestone", "Furnace", "Sapling", "Torch", "Sand", "Sandstone", "Cactus", "TNT", "Water", "Snow", "Gravel", "Ice" };
-    for (int i = 0; i < 20; i++) names[i] = e[i];
-    static const char* const it[] = { "Stick", "Wooden Pickaxe", "Wooden Axe", "Wooden Shovel", "Wooden Sword", "Wool", "Raw Mutton", "Raw Chicken", "Feather", "Apple", "Raw Beef", "Steak", "Cooked Mutton", "Cooked Chicken", "Charcoal", "Rotten Flesh", "Gunpowder" };
-    for (int i = 0; i < 17; i++) names[I_STICK + i] = it[i];
-    for (int i = B_DOOR_LC; i <= I_DOOR; i++) names[i] = "Door";
-    static const char* const o[] = { "Coal Ore", "Iron Ore", "Gold Ore", "Diamond Ore", "Iron Block", "Gold Block", "Diamond Block", "Bed", "Iron Ingot", "Gold Ingot", "Diamond", "Netherrack", "Lava", "Obsidian" };
-    for (int i = 0; i < 14; i++) names[B_COAL_ORE + i] = o[i];
-    static const char* const n2[] = { "Portal", "Soul Sand", "Glowstone", "Bedrock", "Flint and Steel", "Chest" };
-    for (int i = 0; i < 6; i++) names[B_PORTAL + i] = n2[i];
-    static const char* const n3[] = { "Spruce Log", "Acacia Log", "Spruce Leaves", "Acacia Leaves", "Spruce Planks", "Acacia Planks", "Farmland", "Wet Farmland", "Wheat", "Wheat", "Wheat", "Wooden Hoe", "Seeds", "Wheat", "Bread", "Emerald", "Bucket", "Water Bucket", "Lava Bucket" };
-    for (int i = 0; i < 19; i++) names[B_LOG_S + i] = n3[i];
-    static const char* const n4[] = { "Kelp", "Seagrass", "Brain Coral Block", "Tube Coral Block", "Bubble Coral Block", "Fire Coral Block", "Horn Coral Block",
-        "String", "Spider Eye", "Fishing Rod", "Raw Cod", "Raw Salmon", "Tropical Fish", "Cooked Cod", "Cooked Salmon", "Dried Kelp", "Boat", "Magma Block" };
-    for (int i = 0; i < 18; i++) names[B_KELP + i] = n4[i];
-    static const char* const matE[] = { "Wooden", "Stone", "Iron", "Golden", "Diamond" };
-    static const char* const typE[] = { "Pickaxe", "Axe", "Shovel", "Sword" };
-    for (int t = 1; t < 5; t++)
-        for (int k = 0; k < 4; k++) names[I_TOOLS + (t - 1) * 4 + k] = std::string(matE[t]) + " " + typE[k];
+    for (int i = 0; i < TX_MAX; i++) ltxt[i].clear();
+    readLangFile(false, lang);
+    for (int i = 0; i < 128; i++) {
+        const std::string& s = ltxt[NAME_BASE + i];
+        names[i] = s.empty() ? namesEs[i] : s;
+    }
+}
+
+// lee idiomas.txt: list = arma la lista de idiomas (cabecera); si no, carga en ltxt[] el bloque [id]
+void Game::readLangFile(bool list, int id) {
+    lfSec = -1;
+    std::string data;
+    if (!loadLangData(data)) return;
+    size_t i = 0, n = data.size();
+    if (n >= 3 && (unsigned char)data[0] == 0xEF && (unsigned char)data[1] == 0xBB && (unsigned char)data[2] == 0xBF) i = 3;   // BOM
+    bool done = false;
+    while (!done && i < n) {
+        size_t e = data.find('\n', i);
+        if (e == std::string::npos) e = n;
+        done = langLine(utf8Fold(data.substr(i, e - i)), list, id);
+        i = e + 1;
+    }
+}
+
+// procesa una linea; devuelve true cuando ya no hace falta seguir leyendo
+bool Game::langLine(const std::string& line, bool list, int id) {
+    std::string s = langTrim(line);
+    if (s.empty()) return false;
+    char c0 = s[0];
+    if (c0 == '#') return false;
+    if (c0 == '[') {
+        if (list) return true;                          // la cabecera termina en el primer bloque
+        size_t cb = s.find(']');
+        if (cb == std::string::npos) return false;
+        if (lfSec == id) return true;                   // termino el bloque pedido
+        lfSec = langNum(s.substr(1, cb - 1));
+        return false;
+    }
+    size_t eq = s.find('=');
+    if (eq == std::string::npos || eq == 0) return false;
+    if (list) {
+        size_t e = s.find(']');
+        if (s.compare(0, 5, "lang[") == 0 && e != std::string::npos && e > 5 && e < eq && langN < MAX_LANGS) {
+            int lid = langNum(s.substr(5, e - 5));
+            std::string nm = trimWs(s.substr(eq + 1));
+            if (lid >= 0 && lid < 128 && !nm.empty()) {
+                bool dup = false;
+                for (int i = 0; i < langN; i++) if (langIds[i] == lid) dup = true;
+                if (!dup) { langIds[langN] = lid; langNames[langN] = nm; langN++; }
+            }
+        }
+    } else if (lfSec == id) {
+        int tid = langNum(s.substr(0, eq));
+        std::string t = trimWs(s.substr(eq + 1));
+        if (tid > 0 && tid < TX_MAX && !t.empty()) ltxt[tid] = t;
+    }
+    return false;
 }

@@ -19,6 +19,15 @@ lang[1]=English
 #    espacio (por ejemplo 'Nombre: ') el juego lo agrega solo.
 #  - Si el telefono no tiene en su fuente alguna letra (acentos, cirilico...),
 #    esa letra puede verse como un cuadrado: probar en el dispositivo.
+#  - IDs 1 a 95: textos de la version Java (60 a 75 y 89 a 95 solo los usa esa version).
+#    IDs 96 en adelante: textos de las versiones con gamepad (PSP, N64, MS-DOS); Java los ignora.
+#  - Este MISMO archivo se usa en todas las plataformas (j2me, psp, n64, msdos), cada una en
+#    <plataforma>/working-tree/src/leng/idiomas.txt. Si se edita uno, copiarlo a los otros tres.
+#  - Dentro del juego, PSP / N64 / MS-DOS solo tienen fuente ASCII: las letras con acento se dibujan
+#    sin acento (a, e, n...) y los caracteres que no sean latinos se ven como '?'.
+#  - Donde va el archivo: PSP = ms0:/PSP/GAME/Minecraft2D/leng/idiomas.txt (build.sh lo copia);
+#    N64 = dentro de la ROM (Makefile) o, si no esta, sd:/MC64/leng/idiomas.txt;
+#    MS-DOS = leng\idiomas.txt junto a mme.exe (build.sh lo copia).
 #
 # PARA AGREGAR UN IDIOMA SIN TOCAR EL CODIGO
 #  1) Arriba, agregar una linea  lang[ID]=Nombre  con un ID libre.
@@ -125,6 +134,17 @@ lang[1]=English
 93=8/Abj  # controles: nombre de tecla 8
 94=L / Izq  # controles: tecla blanda izquierda
 95=R / Der  # controles: tecla blanda derecha
+# ---- gamepads: PSP / N64 / MS-DOS (la version Java no usa estos IDs) ----
+96=X: aceptar   O: atras   Start: pausa en juego  # PSP: menu principal, pista inferior
+97=A: aceptar   B: atras   Start: pausa  # N64 y MS-DOS: menu principal, pista inferior
+98=Cuadrado: borrar mundo  # PSP: lista de mundos, pista inferior
+99=Z: borrar mundo  # N64 y MS-DOS: lista de mundos, pista inferior
+100=Semilla: X alterna, Izq/Der +-1, L/R +-1000  # gamepads: crear mundo, pista de la semilla
+101=Izq / Der o X: cambiar  # PSP: ajustes, ayuda de botones
+102=Izq / Der o A: cambiar  # N64 y MS-DOS: ajustes, ayuda de botones
+103=X: reaparecer  # PSP: pantalla de muerte, ayuda
+104=A: reaparecer  # N64 y MS-DOS: pantalla de muerte, ayuda
+105=Aldeano  [L][R] lista  # gamepads: inventario, titulo del comercio
 # ---- nombres de bloques e items (1000 + id) ----
 1001=Pasto  # B_GRASS
 1002=Tierra  # B_DIRT
@@ -338,6 +358,17 @@ lang[1]=English
 93=8/Down  # 8/Abj
 94=L / Left  # L / Izq
 95=R / Right  # R / Der
+# ---- gamepads: PSP / N64 / MS-DOS (la version Java no usa estos IDs) ----
+96=X: accept   O: back   Start: pause in game  # X: aceptar   O: atras   Start: pausa en juego
+97=A: accept   B: back   Start: pause  # A: aceptar   B: atras   Start: pausa
+98=Square: delete world  # Cuadrado: borrar mundo
+99=Z: delete world  # Z: borrar mundo
+100=Seed: X toggles, Left/Right +-1, L/R +-1000  # Semilla: X alterna, Izq/Der +-1, L/R +-1000
+101=Left / Right or X: change  # Izq / Der o X: cambiar
+102=Left / Right or A: change  # Izq / Der o A: cambiar
+103=X: respawn  # X: reaparecer
+104=A: respawn  # A: reaparecer
+105=Villager  [L][R] list  # Aldeano  [L][R] lista
 # ---- nombres de bloques e items (1000 + id) ----
 1001=Grass  # Pasto
 1002=Dirt  # Tierra
