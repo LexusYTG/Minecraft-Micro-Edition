@@ -91,7 +91,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             A_NEW = 8, A_WBACK = 9, A_CNAME = 10, A_CSEED = 11, A_CGO = 12, A_CBACK = 13, A_YES = 14, A_NO = 15, A_CMODE = 16, A_LANG = 17,
             A_CTRL = 18, A_KEY0 = 40, A_KRESET = 60, A_KBACK = 61, A_PICK0 = 70;   // A_KEY0..+13 = teclas del esquema; A_PICK0..+14 = acciones del selector
     static final int ST_KEYS = 9, ST_END = 10;
-    static final int A_SND = 20, A_MUS = 21, A_SFX = 22, A_FOL = 23;   // sonido: menu / volumen de musica / volumen de efectos
+    static final int A_SND = 20, A_MUS = 21, A_SFX = 22, A_FOL = 23, A_CDIFF = 24;   // sonido: menu / volumen de musica / volumen de efectos
     // Controles: cada tecla logica (0-9, 10 = *, 11 = #, 12 = LSK, 13 = RSK) tiene UNA accion (km[tecla], -1 = ninguna);
     // una accion puede estar en varias teclas. El esquema del menu Controles edita km[].
     static final int NKEY = 14;
@@ -156,6 +156,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     static final int OUT = 45;   // slot virtual de resultado de crafteo
     static final int FURN = 4;   // craftN = 4: pantalla del horno (slots 36 entrada, 37 combustible, 38 salida)
     // cana de azucar, pastel, mesa de encantamiento (bloques); azucar, papel, libro, cuero, cubeta con leche (items)
+    static final int B_TUFT = 136, B_FLOWER_R = 137, B_FLOWER_Y = 138;   // pasto alto y flores decorativas (no solidos)
     static final int B_CANE = 128, B_CAKE = 129, B_ENCH = 130, I_SUGAR = 131, I_PAPER = 132, I_BOOK = 133, I_LEATHER = 134, I_BUCKET_M = 135;
     static final int ENCH = 7;   // craftN = 7: mesa de encantamiento (36 = item a encantar, 37 = item a vender, OUT = resultado, 38 = experiencia)
     // los encantamientos viajan en slDur: bits 0-10 = durabilidad, desde el bit 11 = 6 encantamientos x 3 bits de nivel
@@ -326,8 +327,8 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     int bedX, bedY, bedZ;
     // modo creativo
     boolean creative, flying;
-    int jumpTick = -100, palPage, cMode;
-    int[] palIds = new int[192];
+    int jumpTick = -100, palPage, cMode, cDiff, diff, peaceT;   // diff: 0 normal, 1 pacifico, 2 dificil (bits 1-2 del byte de modo del mundo)
+    int[] palIds = new int[200];
     int palN;
     int heldId, heldCnt, heldDur;
     int cursor, craftN = 2, slS;
@@ -529,7 +530,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         byte[] cd = chunkFor(x, z);
         if (cd == null) return true;
         int b = cd[(((x & 15) << 4) + (z & 15)) * H + y] & 0xFF;
-        return b != 0 && b != B_CANE && b != B_SAPLING && b != B_TORCH && b != B_WATER && b != B_DOOR_LO && b != B_DOOR_UO && b != B_LAVA && b != B_PORTAL && b != B_ENDPORTAL && (b < B_CROP0 || b > B_CROP2) && b != B_KELP && b != B_SEAGRASS;
+        return b != 0 && b != B_CANE && b != B_SAPLING && b != B_TORCH && b != B_WATER && b != B_DOOR_LO && b != B_DOOR_UO && b != B_LAVA && b != B_PORTAL && b != B_ENDPORTAL && (b < B_CROP0 || b > B_CROP2) && b != B_KELP && b != B_SEAGRASS && (b < B_TUFT || b > B_FLOWER_Y);
     }
 
     boolean boxCollides(float x, float y, float z, float hw, float h) {
@@ -544,7 +545,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     }
 
     int topY(int x, int z) {
-        for (int y = H - 1; y >= 0; y--) if (blockAt(x, y, z) != 0) return y;
+        for (int y = H - 1; y >= 0; y--) { int tb = blockAt(x, y, z); if (tb != 0 && (tb < B_TUFT || tb > B_FLOWER_Y)) return y; }   // las plantitas decorativas no cuentan como suelo
         return -1;
     }
 
@@ -735,7 +736,10 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         "Botin",   // 127
         "Tu",   // 128
         "Pez",   // 129
-        "Pica! Zona verde"   // 130
+        "Pica! Zona verde",   // 130
+        "Dificultad: ",   // 131
+        "Pacifico",   // 132
+        "Dificil"   // 133
     };
 
     String L(String t) {
@@ -883,7 +887,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     boolean isBlockItem(int id) { return (id >= 1 && id <= 19) || id == I_DOOR || (id >= B_COAL_ORE && id <= B_BED)
                 || (id >= B_NETHERRACK && id <= B_OBSIDIAN) || id == B_SOULSAND || id == B_GLOWSTONE || id == B_CHEST || id == B_MAGMA
                 || (id >= B_LOG_S && id <= B_FARM_DRY) || id == I_SEEDS || (id >= B_KELP && id <= B_CORAL4)
-                || (id >= B_ENDSTONE && id <= B_EGG && id != B_ENDPORTAL) || (id >= B_CANE && id <= B_ENCH); }
+                || (id >= B_ENDSTONE && id <= B_EGG && id != B_ENDPORTAL) || (id >= B_CANE && id <= B_ENCH) || (id >= B_TUFT && id <= B_FLOWER_Y); }
     boolean isDoor(int b) { return b >= B_DOOR_LC && b <= B_DOOR_UO; }
     boolean isFood(int id) {
         return id == I_APPLE || id == I_BREAD || id == I_MUTTON || id == I_CHICKEN || id == I_BEEF || id == I_STEAK
@@ -1351,6 +1355,12 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         }
         names[B_KELP] = "Alga marina"; names[B_SEAGRASS] = "Pasto marino";
         hard[B_KELP] = 0f; hard[B_SEAGRASS] = 0f;
+        cTop[B_TUFT] = 0x4DAA3A; cSide[B_TUFT] = 0x4DAA3A; cBot[B_TUFT] = 0x4DAA3A;
+        cTop[B_FLOWER_R] = 0xD03030; cSide[B_FLOWER_R] = 0x3FA03A; cBot[B_FLOWER_R] = 0x3FA03A;
+        cTop[B_FLOWER_Y] = 0xF0D020; cSide[B_FLOWER_Y] = 0x3FA03A; cBot[B_FLOWER_Y] = 0x3FA03A;
+        names[B_TUFT] = "Pasto alto"; names[B_FLOWER_R] = "Amapola"; names[B_FLOWER_Y] = "Diente de leon";
+        hard[B_TUFT] = 0f; hard[B_FLOWER_R] = 0f; hard[B_FLOWER_Y] = 0f;
+        icol[B_TUFT] = 0x4DAA3A; icol[B_FLOWER_R] = 0xD03030; icol[B_FLOWER_Y] = 0xF0D020;
         icol[B_KELP] = 0x2F8A3A; icol[B_SEAGRASS] = 0x3FA03A;
         hard[B_LOG_S] = 2f; hard[B_LOG_S + 1] = 2f; hard[B_LEAVES_S] = 0.2f; hard[B_LEAVES_S + 1] = 0.2f;
         hard[B_PLANKS_S] = 2f; hard[B_PLANKS_S + 1] = 2f; hard[B_FARM_DRY] = 0.6f; hard[B_FARM_WET] = 0.6f;
@@ -1819,6 +1829,10 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
                     for (int k = 0; k < ch && h + k < H; k++) d[base + h + k] = (byte) B_CANE;
                 } else if (h < SEA && bio != 4 && riverV(x, z) >= 0.045f) {
                     seaLife(d, base, x, z, h);
+                } else if (h > SEA + 1 && bio != 1 && bio != 2 && bio != 4 && h < H - 1) {   // pasto alto y flores sobre el pasto
+                    int pr = (hash(x, z, 150) & 0x7fffffff) % 100;
+                    if (pr < 12) d[base + h] = (byte) B_TUFT;
+                    else if (pr < 15 && noise(x, z, 4, 151) > 0.55f) d[base + h] = (byte) (((hash(x >> 2, z >> 2, 152) & 1) == 0) ? B_FLOWER_R : B_FLOWER_Y);
                 }
             }
         }
@@ -2163,7 +2177,13 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (bright < 70) for (int i = 0; i < 3; i++) spawnMob(hostType(), false);
     }
 
+    boolean hostileMob(int t) { return t == 3 || t == 4 || t == 10 || t == 12 || t == 13; }
+
+    // dano de mobs: en dificil pega 50% mas
+    void hurtM(int n) { if (diff == 2) n += (n + 1) / 2; hurt(n); }
+
     boolean spawnAt(int type, int x, int z) {
+        if (diff == 1 && hostileMob(type)) return false;   // pacifico: sin monstruos
         if (mobs.size() >= 40) return false;
         if (chunkFor(x, z) == null) return false;
         if (type >= 7 && type <= 9) {   // peces: solo en agua de 4+ bloques de profundidad
@@ -2203,7 +2223,8 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         int tb = blockAt(x, top, z);
         if (type < 3) { if (tb != B_GRASS) return false; }
         else if (tb == 0 || isLeaves(tb) || tb == B_SAPLING || tb == B_TORCH || tb == B_WATER) return false;
-        if (blockAt(x, top + 1, z) != 0 || blockAt(x, top + 2, z) != 0) return false;
+        int a1 = blockAt(x, top + 1, z);
+        if ((a1 != 0 && (a1 < B_TUFT || a1 > B_FLOWER_Y)) || blockAt(x, top + 2, z) != 0) return false;
         Mob m = new Mob();
         m.type = type;
         m.x = x + 0.5f; m.z = z + 0.5f; m.y = top + 1.001f;
@@ -2305,7 +2326,8 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         inWorld = false;
         curWorld = w;
         curStore = cat("mcw", w.id);
-        creative = (w.mode == 1);
+        creative = (w.mode & 1) == 1;
+        diff = (w.mode >> 1) & 3;
         flying = false;
         seed = w.seed;
         for (int i = 0; i < nch; i++) { chCx[i] = NONE; chCz[i] = NONE; chDirty[i] = false; }
@@ -2494,7 +2516,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (state == ST_MENU) navIds = new int[] { A_PLAY, A_CTRL, A_SND, A_QUIT };
         else if (state == ST_PAUSE) navIds = new int[] { A_RESUME, A_SETTINGS, A_LANG, A_TOMENU };
         else if (state == ST_SET) navIds = inWorld ? new int[] { A_RD, A_FOL, A_MUS, A_SFX, A_SETBACK } : new int[] { A_FOL, A_MUS, A_SFX, A_SETBACK };
-        else if (state == ST_CREATE) navIds = new int[] { A_CNAME, A_CSEED, A_CMODE, A_CGO, A_CBACK };
+        else if (state == ST_CREATE) navIds = new int[] { A_CNAME, A_CSEED, A_CMODE, A_CDIFF, A_CGO, A_CBACK };
         else if (state == ST_CONFIRM) navIds = new int[] { A_YES, A_NO };
         else if (state == ST_WORLDS) {
             int n = worlds.size();
@@ -2538,7 +2560,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     void openCreate() {
         cName = cat(L("Mundo "), nextId());
         cSeedTxt = "";
-        cMode = 0;
+        cMode = 0; cDiff = 0;
         go(ST_CREATE);
         navSel = 3;
     }
@@ -2594,7 +2616,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (b <= 0 || b == B_WATER || b == B_LAVA || b == B_PORTAL || b == B_ENDPORTAL) return -1;
         if (isLog(b) || isPlanks(b) || b == B_TABLE || b == B_CHEST || b == B_TORCH || isDoor(b)) return Sfx.G_WOOD;
         if (b == B_GRASS || isLeaves(b) || b == B_SAPLING || b == B_CACTUS || b == B_BED || b == B_TNT || b == B_KELP
-                || b == B_SEAGRASS || (b >= B_CROP0 && b <= B_CROP2)) return Sfx.G_GRASS;
+                || b == B_SEAGRASS || (b >= B_CROP0 && b <= B_CROP2) || (b >= B_TUFT && b <= B_FLOWER_Y)) return Sfx.G_GRASS;
         if (b == B_DIRT || b == B_FARM_DRY || b == B_FARM_WET || b == B_SOULSAND) return Sfx.G_DIRT;
         if (b == B_SAND || b == B_GRAVEL || b == B_SNOW) return Sfx.G_SAND;
         if ((b >= B_IRON_BLK && b <= B_DIAM_BLK) || b == B_SPAWNER) return Sfx.G_METAL;
@@ -2634,7 +2656,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         } else {
             try { sd = Integer.parseInt(cSeedTxt); } catch (Exception e) { sd = cSeedTxt.hashCode(); }
         }
-        jobWorld = addWorld(cName, sd, cMode);
+        jobWorld = addWorld(cName, sd, cMode | (cDiff << 1));
         job = J_ENTER;
     }
 
@@ -2696,6 +2718,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             case A_CNAME: editText(1); break;
             case A_CSEED: editText(2); break;
             case A_CMODE: cMode = 1 - cMode; break;
+            case A_CDIFF: cDiff = (cDiff == 1) ? 0 : (cDiff == 0 ? 2 : 1); break;   // pacifico -> normal -> dificil
             case A_CGO: doCreate(); break;
             case A_CBACK: openWorlds(); break;
             case A_YES:
@@ -3048,6 +3071,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         for (int id = B_ENDSTONE; id <= B_EGG; id++) if (id != B_ENDPORTAL) palIds[palN++] = id;
         for (int id = I_BLAZE_ROD; id <= I_EYE; id++) palIds[palN++] = id;
         for (int id = B_CANE; id <= I_BUCKET_M; id++) palIds[palN++] = id;
+        for (int id = B_TUFT; id <= B_FLOWER_Y; id++) palIds[palN++] = id;
     }
 
     boolean palMode() { return creative && state == ST_INV && craftN == 2; }
@@ -3597,6 +3621,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         for (int i = mobs.size() - 1; i >= 0; i--) {
             Mob m = (Mob) mobs.elementAt(i);
             updateMob(m);
+            if (diff == 1 && m.hp > 0 && hostileMob(m.type)) m.hp = 0;
             if (m.hp > 0 && --m.snd <= 0) { m.snd = 90 + rnd(260); if (rnd(2) == 0) mobSnd(m, 0); }
             if (m.y < (dim == 2 ? 6f : -10f) && m.type != 14) m.hp = 0;
             if (m.type == 14 && m.hp <= 0 && dragon != null) dragonDie(m);
@@ -3611,7 +3636,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         }
         if (bright < 70 && ++hostTimer >= 100) {
             hostTimer = 0;
-            if (countMobs(true) < 6) spawnMob(dim == 1 ? 3 : hostType(), true);
+            if (countMobs(true) < (diff == 2 ? 9 : 6)) spawnMob(dim == 1 ? 3 : hostType(), true);
         }
         if (tick % 200 == 0) updateSpawner();
         if (dim == 2) updateEnd();
@@ -3765,7 +3790,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             int ix = ifloor(ex + dx * d), iy = ifloor(ey + dy * d), iz = ifloor(ez + dz * d);
             if (ix != lx || iy != ly || iz != lz) {
                 int hb = blockAt(ix, iy, iz);
-                if (hb != 0 && (bk || (hb != B_WATER && hb != B_LAVA)) && hb != B_PORTAL && hb != B_DOOR_LO && hb != B_DOOR_UO) {
+                if (hb != 0 && (bk || (hb != B_WATER && hb != B_LAVA)) && hb != B_PORTAL && hb != B_DOOR_LO && hb != B_DOOR_UO && hb != B_TUFT) {   // el pasto alto es solo decoracion: el rayo lo atraviesa
                     tx = ix; ty = iy; tz = iz;
                     ax = lx; ay = ly; az = lz;
                     tDist = d;
@@ -3876,6 +3901,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         else if (b >= B_CROP0 && b <= B_CROP2) drop = I_SEEDS;
         else if (b == B_ICE) drop = 0;
         else if (b == B_SEAGRASS) drop = 0;
+        else if (b == B_TUFT) drop = (rnd(8) == 0) ? I_SEEDS : 0;
         else if (b == B_SNOW) drop = (toolType(tl) == 2) ? B_SNOW : 0;
         else if (b == B_COAL_ORE) drop = (lvl >= 0) ? I_COAL : 0;
         else if (b == B_IRON_ORE) drop = (lvl >= 1) ? B_IRON_ORE : 0;
@@ -4134,7 +4160,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         }
         if (px + HW > ax && px - HW < ax + 1 && pz + HW > az && pz - HW < az + 1
                 && py + 1.8f > ay && py < ay + 1) return;
-        if (id == B_SAPLING) {
+        if (id == B_SAPLING || (id >= B_TUFT && id <= B_FLOWER_Y)) {
             int below = blockAt(ax, ay - 1, az);
             if (below != B_GRASS && below != B_DIRT) return;
         }
@@ -4189,6 +4215,10 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             if (++starveTimer >= 80) { starveTimer = 0; if (health > 1) hurt(1); }
         } else {
             starveTimer = 0;
+        }
+        if (diff == 1) {   // pacifico: sin hambre y la vida se regenera sola
+            hunger = 20; hungerFx = 0; starveTimer = 0;
+            if (health < 20 && ++peaceT >= 60) { peaceT = 0; health++; }
         }
     }
 
@@ -5069,7 +5099,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     void updateShot(Mob m) {
         m.x += m.vx; m.y += m.vy; m.z += m.vz;
         float dx = px - m.x, dy = py + 0.9f - m.y, dz = pz - m.z;
-        if (dx * dx + dy * dy + dz * dz < 0.64f) { hurt(m.atk); m.hp = 0; return; }
+        if (dx * dx + dy * dy + dz * dz < 0.64f) { hurtM(m.atk); m.hp = 0; return; }
         if (--m.timer <= 0 || solidAt(ifloor(m.x), ifloor(m.y), ifloor(m.z))) m.hp = 0;
     }
 
@@ -5134,7 +5164,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (m.vx * m.vx + m.vz * m.vz > 0.0004f) m.ang = atan2f(m.vx, m.vz);
         float ex = px - m.x, ey = py + 0.9f - (m.y + 1f), ez = pz - m.z;
         if (m.atk <= 0 && ex * ex + ey * ey + ez * ez < 9f) {
-            hurt(3); m.atk = 100; vy = 0.3f;
+            hurtM(3); m.atk = 100; vy = 0.3f;
             if (m.st == 1) { m.st = 0; m.timer = 150 + rnd(80); }
         }
     }
@@ -5164,7 +5194,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         m.moving = true;
         if (d2 < 3f && dy < 1.5f && dy > -1.5f) {
             m.moving = false;
-            if (m.atk <= 0) { hurt(3); m.atk = 70; }
+            if (m.atk <= 0) { hurtM(3); m.atk = 70; }
         } else if (d2 > 16f && rnd(200) == 0) {
             enderTp(m, true);
         }
@@ -5260,7 +5290,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             if (near) {
                 m.moving = false;
                 // tiempo de carga antes del golpe y enfriamiento largo entre golpes
-                if (++m.wind >= 12 && m.atk <= 0) { hurt(m.type == 10 ? 2 : 3); m.atk = 40; m.wind = 0; }
+                if (++m.wind >= 12 && m.atk <= 0) { hurtM(m.type == 10 ? 2 : 3); m.atk = 40; m.wind = 0; }
             } else if (m.wind > 0) {
                 m.wind--;
             }
@@ -5303,7 +5333,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         float ddx = px - m.x, ddy = (py + 0.9f) - (m.y + 0.8f), ddz = pz - m.z;
         float d = (float) Math.sqrt((double) (ddx * ddx + ddy * ddy + ddz * ddz));
         float reach = big ? 8f : 6f;
-        if (d < reach && losClear(m.x, m.y + 0.8f, m.z, px, py + 0.9f, pz)) hurt((int) ((reach - d) * (big ? 2.2f : 1.8f)));
+        if (d < reach && losClear(m.x, m.y + 0.8f, m.z, px, py + 0.9f, pz)) hurtM((int) ((reach - d) * (big ? 2.2f : 1.8f)));
         if (big) {
             for (int i = 0; i < mobs.size(); i++) {
                 Mob o = (Mob) mobs.elementAt(i);
@@ -5422,7 +5452,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         }
     }
 
-    boolean opaque(int b) { return b != 0 && b != B_CANE && b != B_CAKE && b != B_SAPLING && b != B_TORCH && b != B_WATER && !(b >= B_DOOR_LC && b <= B_DOOR_UO) && b != B_BED && b != B_LAVA && b != B_PORTAL && b != B_ENDPORTAL && (b < B_CROP0 || b > B_CROP2) && b != B_KELP && b != B_SEAGRASS && b != B_ENCH && b != B_FRAME && b != B_FRAME_EYE && b != B_EGG; }
+    boolean opaque(int b) { return b != 0 && b != B_CANE && b != B_CAKE && b != B_SAPLING && b != B_TORCH && b != B_WATER && !(b >= B_DOOR_LC && b <= B_DOOR_UO) && b != B_BED && b != B_LAVA && b != B_PORTAL && b != B_ENDPORTAL && (b < B_CROP0 || b > B_CROP2) && b != B_KELP && b != B_SEAGRASS && b != B_ENCH && b != B_FRAME && b != B_FRAME_EYE && b != B_EGG && (b < B_TUFT || b > B_FLOWER_Y); }
 
     int columnTop(int x, int z, byte[] cd) {
         int cx = x >> 4, cz = z >> 4, s = slotOf(cx, cz);
@@ -5961,6 +5991,9 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (id == I_BLAZE_POWDER) return new String[] { "........", "........", "...Y....", "..YOY...", ".YOYOY..", ".OYOYO..", "..OYO...", "........" };
         if (id == I_PEARL) return new String[] { "........", "..nNNn..", ".nNNNNn.", ".NNNNNN.", ".NNNNNN.", ".nNNNNn.", "..nnnn..", "........" };
         if (id == I_EYE) return new String[] { "........", "..nNNn..", ".nNYYNn.", ".NYKKYN.", ".NYKKYN.", ".nNYYNn.", "..nnnn..", "........" };
+        if (id == B_TUFT) return new String[] { "N...N...", ".N.N.N..", ".NNNnN.N", "..NnNNN.", "..nNnN..", "...nN...", "...nn...", "........" };
+        if (id == B_FLOWER_R) return new String[] { "...RR...", "..RDDR..", "..RDDR..", "...RR...", "...N....", "..nN.N..", "...NNn..", "...N...." };
+        if (id == B_FLOWER_Y) return new String[] { "...YY...", "..YOOY..", "..YOOY..", "...YY...", "...N....", "..nN.N..", "...NNn..", "...N...." };
         if (id == B_CANE) return new String[] { "...N.N..", "...N.N..", "..nN.Nn.", "...NnN..", "...N.N..", "..nNnN..", "...N.N..", "...N.N.." };
         if (id == B_CAKE) return new String[] { "........", "..WWRW..", ".WWWWWW.", ".TTTTTT.", ".TwTwTw.", ".TTTTTT.", ".bbbbbb.", "........" };
         if (id == B_ENCH) return new String[] { "........", "..bRRb..", "..bWWb..", ".rrrrrr.", "rRRRRRRr", "KKKKKKKK", "KkCKKCkK", "KKKKKKKK" };
@@ -6044,6 +6077,17 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         else if (b == B_CANE) { col = 0x7CCB4A; h = 1f; w = 0.42f; }
         else if (b == B_SEAGRASS) { col = 0x3FA03A; h = 0.75f; w = 0.38f; tri = true; }
         else if (b >= B_CROP0 && b <= B_CROP2) { col = (b == B_CROP2) ? 0xC8B040 : 0x4FB03A; h = 0.35f + (b - B_CROP0) * 0.3f; w = 0.45f; }
+        else if (b == B_TUFT) { col = 0x4DAA3A; h = 0.6f; w = 0.45f; tri = true; }
+        else if (b == B_FLOWER_R || b == B_FLOWER_Y) {   // tallo + cabeza: 4 planos en total
+            int lq = litPct(x + 0.5f, y + 0.5f, z + 0.5f);
+            int hc = (b == B_FLOWER_R) ? 0xD03030 : 0xF0D020;
+            float fx0 = x + 0.5f, fz0 = z + 0.5f;
+            plane(fx0 - 0.2f, fz0 - 0.2f, fx0 + 0.2f, fz0 + 0.2f, y, 0.5f, true, fx0, fz0, shade(0x3FA03A, lq));
+            plane(fx0 - 0.2f, fz0 + 0.2f, fx0 + 0.2f, fz0 - 0.2f, y, 0.5f, true, fx0, fz0, shade(0x3FA03A, 88 * lq / 100));
+            plane(fx0 - 0.17f, fz0 - 0.17f, fx0 + 0.17f, fz0 + 0.17f, y + 0.36f, 0.24f, false, fx0, fz0, shade(hc, lq));
+            plane(fx0 - 0.17f, fz0 + 0.17f, fx0 + 0.17f, fz0 - 0.17f, y + 0.36f, 0.24f, false, fx0, fz0, shade(hc, 88 * lq / 100));
+            return true;
+        }
         else return false;
         int lp = litPct(x + 0.5f, y + 0.5f, z + 0.5f);
         int c1 = lp >= 100 ? col : shade(col, lp);
@@ -6055,7 +6099,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     }
 
     void drawSmall(int x, int y, int z, int b) {
-        if (flatFol && drawFlat(x, y, z, b)) return;
+        if ((flatFol || (b >= B_TUFT && b <= B_FLOWER_Y)) && drawFlat(x, y, z, b)) return;
         int lp = litPct(x + 0.5f, y + 0.5f, z + 0.5f);
         float cx = x + 0.5f, cz = z + 0.5f;
         if (b == B_TORCH) {
@@ -6136,7 +6180,8 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             if (m == 0) return;
         }
         float dy = y + 0.5f - camY;
-        if (cdx * fx + dy * fy + cdz * fz > -1.8f && cdx * cdx + dy * dy + cdz * cdz < cullNow) drawBlockM(x, y, z, blk, m);
+        float dd2 = cdx * cdx + dy * dy + cdz * cdz;
+        if (cdx * fx + dy * fy + cdz * fz > -1.8f && dd2 < cullNow && (blk < B_TUFT || blk > B_FLOWER_Y || dd2 < 110f)) drawBlockM(x, y, z, blk, m);
     }
 
     void drawBlockM(int x, int y, int z, int b, int m) {
@@ -6152,7 +6197,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
 
     void drawBlock(int x, int y, int z, int b) {
         if (b == B_CANE || b == B_CAKE || b == B_SAPLING || b == B_TORCH || (b >= B_CROP0 && b <= B_CROP2) || b == B_KELP || b == B_SEAGRASS
-                || b == B_ENCH || b == B_FRAME || b == B_FRAME_EYE || b == B_EGG) { drawSmall(x, y, z, b); return; }
+                || b == B_ENCH || b == B_FRAME || b == B_FRAME_EYE || b == B_EGG || (b >= B_TUFT && b <= B_FLOWER_Y)) { drawSmall(x, y, z, b); return; }
         if (isDoor(b)) { drawDoor(x, y, z, b); return; }
         if (b == B_BED) { drawBed(x, y, z); return; }
         if (b == B_ENDPORTAL) { drawBox(x, y + 0.7f, z, x + 1, y + 0.85f, z + 1, (((tick / 8) + x + z) & 1) == 0 ? 0x0B3C50 : 0x145070, 100); return; }
@@ -6367,7 +6412,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (!opqOk) {
             for (int i = 0; i < 256; i++) {
                 opq[i] = opaque(i);
-                spc[i] = (i == B_CANE || i == B_CAKE || i == B_SAPLING || i == B_TORCH || (i >= B_CROP0 && i <= B_CROP2) || i == B_KELP || i == B_SEAGRASS || isDoor(i) || i == B_BED || i == B_PORTAL || i == B_ENDPORTAL || i == B_ENCH || i == B_FRAME || i == B_FRAME_EYE || i == B_EGG);
+                spc[i] = (i == B_CANE || i == B_CAKE || i == B_SAPLING || i == B_TORCH || (i >= B_CROP0 && i <= B_CROP2) || i == B_KELP || i == B_SEAGRASS || isDoor(i) || i == B_BED || i == B_PORTAL || i == B_ENDPORTAL || i == B_ENCH || i == B_FRAME || i == B_FRAME_EYE || i == B_EGG || (i >= B_TUFT && i <= B_FLOWER_Y));
             }
             opqOk = true;
         }
@@ -7097,6 +7142,8 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         btn(A_CSEED, cat(L("Semilla: "), cSeedTxt.length() == 0 ? L("aleatoria") : cSeedTxt), btnX, y, btnW, btnH);
         y += btnH + 6;
         btn(A_CMODE, cat(L("Modo: "), cMode == 1 ? L("Creativo") : L("Supervivencia")), btnX, y, btnW, btnH);
+        y += btnH + 6;
+        btn(A_CDIFF, cat(L("Dificultad: "), cDiff == 1 ? L("Pacifico") : (cDiff == 2 ? L("Dificil") : L("Normal"))), btnX, y, btnW, btnH);
         y += btnH + 6;
         btn(A_CGO, "Crear", btnX, y, btnW, btnH);
         btn(A_CBACK, "Atras", btnX, sh - btnH - 4, btnW, btnH);

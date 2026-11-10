@@ -280,6 +280,9 @@ lang[6]=Português
 128=Tu  # Tu
 129=Pez  # Pez
 130=Pica! Zona verde  # Pica! Zona verde
+131=Dificultad:  # Dificultad:
+132=Pacifico  # Pacifico
+133=Dificil  # Dificil
 1115=Piedra del End
 1116=Ladrillo del Nether
 1117=Ladrillo de piedra
@@ -301,6 +304,9 @@ lang[6]=Português
 1133=Libro
 1134=Cuero
 1135=Cubeta con leche
+1136=Pasto alto  # Pasto alto
+1137=Amapola  # Amapola
+1138=Diente de leon  # Diente de leon
 
 [1]   # English
 # ---- interfaz ----
@@ -549,6 +555,9 @@ lang[6]=Português
 128=You  # Tu
 129=Fish  # Pez
 130=Bite! Green zone  # Pica! Zona verde
+131=Difficulty:  # Dificultad:
+132=Peaceful  # Pacifico
+133=Hard  # Dificil
 1115=End Stone
 1116=Nether Brick
 1117=Stone Brick
@@ -570,6 +579,9 @@ lang[6]=Português
 1133=Book
 1134=Leather
 1135=Milk Bucket
+1136=Tall Grass  # Pasto alto
+1137=Poppy  # Amapola
+1138=Dandelion  # Diente de leon
 
 [2]   # Eesti
 # ---- interfaz ----
@@ -818,6 +830,9 @@ lang[6]=Português
 128=Sina  # Tu
 129=Kala  # Pez
 130=Näpib! Roheline ala  # Pica! Zona verde
+131=Raskusaste:  # Dificultad:
+132=Rahulik  # Pacifico
+133=Raske  # Dificil
 1115=Endi kivi
 1116=Netheri tellis
 1117=Kivitellis
@@ -839,6 +854,9 @@ lang[6]=Português
 1133=Raamat
 1134=Nahk
 1135=Piimaämber
+1136=Kõrge rohi  # Pasto alto
+1137=Moon  # Amapola
+1138=Võilill  # Diente de leon
 
 [3]   # Русский
 # ---- interfaz ----
@@ -1087,6 +1105,9 @@ lang[6]=Português
 128=Ты  # Tu
 129=Рыба  # Pez
 130=Клюёт! Зелёная зона  # Pica! Zona verde
+131=Сложность:  # Dificultad:
+132=Мирный  # Pacifico
+133=Сложный  # Dificil
 1115=Камень Энда
 1116=Незер-кирпич
 1117=Каменный кирпич
@@ -1108,6 +1129,9 @@ lang[6]=Português
 1133=Книга
 1134=Кожа
 1135=Ведро молока
+1136=Высокая трава  # Pasto alto
+1137=Мак  # Amapola
+1138=Одуванчик  # Diente de leon
 
 [4]   # Română
 # ---- interfaz ----
@@ -1356,6 +1380,9 @@ lang[6]=Português
 128=Tu  # Tu
 129=Pește  # Pez
 130=Muşcă! Zona verde  # Pica! Zona verde
+131=Dificultate:  # Dificultad:
+132=Pașnic  # Pacifico
+133=Greu  # Dificil
 1115=Piatră End
 1116=Cărămidă Nether
 1117=Cărămidă de piatră
@@ -1377,6 +1404,9 @@ lang[6]=Português
 1133=Carte
 1134=Piele
 1135=Găleată cu lapte
+1136=Iarbă înaltă  # Pasto alto
+1137=Mac  # Amapola
+1138=Păpădie  # Diente de leon
 
 [5]   # Polski
 # ---- interfaz ----
@@ -1625,6 +1655,9 @@ lang[6]=Português
 128=Ty  # Tu
 129=Ryba  # Pez
 130=Bierze! Zielona strefa  # Pica! Zona verde
+131=Poziom trudności:  # Dificultad:
+132=Pokojowy  # Pacifico
+133=Trudny  # Dificil
 1115=Kamień Endu
 1116=Cegła Netheru
 1117=Cegła kamienna
@@ -1646,6 +1679,9 @@ lang[6]=Português
 1133=Książka
 1134=Skóra
 1135=Wiadro mleka
+1136=Wysoka trawa  # Pasto alto
+1137=Mak  # Amapola
+1138=Mniszek  # Diente de leon
 
 [6]   # Português
 # ---- interfaz ----
@@ -1894,6 +1930,9 @@ lang[6]=Português
 128=Você  # Tu
 129=Peixe  # Pez
 130=Mordeu! Zona verde  # Pica! Zona verde
+131=Dificuldade:  # Dificultad:
+132=Pacífico  # Pacifico
+133=Difícil  # Dificil
 1115=Pedra do End
 1116=Tijolo do Nether
 1117=Tijolo de pedra
@@ -1915,3 +1954,6 @@ lang[6]=Português
 1133=Livro
 1134=Couro
 1135=Balde de leite
+1136=Grama alta  # Pasto alto
+1137=Papoula  # Amapola
+1138=Dente-de-leão  # Diente de leon
