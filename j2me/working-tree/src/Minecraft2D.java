@@ -90,7 +90,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     static final int A_PLAY = 1, A_QUIT = 2, A_RESUME = 3, A_SETTINGS = 4, A_TOMENU = 5, A_RD = 6, A_SETBACK = 7,
             A_NEW = 8, A_WBACK = 9, A_CNAME = 10, A_CSEED = 11, A_CGO = 12, A_CBACK = 13, A_YES = 14, A_NO = 15, A_CMODE = 16, A_LANG = 17,
             A_CTRL = 18, A_KEY0 = 40, A_KRESET = 60, A_KBACK = 61, A_PICK0 = 70;   // A_KEY0..+13 = teclas del esquema; A_PICK0..+14 = acciones del selector
-    static final int ST_KEYS = 9, ST_END = 10;
+    static final int ST_KEYS = 9, ST_END = 10, ST_LANG = 11;   // ST_LANG: pantalla de inicio para elegir idioma
     static final int A_SND = 20, A_MUS = 21, A_SFX = 22, A_FOL = 23, A_CDIFF = 24;   // sonido: menu / volumen de musica / volumen de efectos
     // Controles: cada tecla logica (0-9, 10 = *, 11 = #, 12 = LSK, 13 = RSK) tiene UNA accion (km[tecla], -1 = ninguna);
     // una accion puede estar en varias teclas. El esquema del menu Controles edita km[].
@@ -373,7 +373,8 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         sndApply();
         applyLang();
         setupWindow(RD_OPT[rdIdx]);
-        go(ST_MENU);
+        go(ST_LANG);
+        navSel = Math.max(0, langPos());
     }
 
     protected void sizeChanged(int w, int h) {
@@ -519,6 +520,10 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (chCx[s] != cx || chCz[s] != cz) return;
         int bi = (((x & 15) << 4) + (z & 15)) * H + y;
         if (chData[s][bi] == B_CHEST && b != B_CHEST) chestFree(x, y, z);
+        if (y + 1 < H && b != B_GRASS && b != B_DIRT) {   // pasto alto y flores se caen si les sacan el piso
+            int ab = chData[s][bi + 1] & 0xFF;
+            if (ab >= B_TUFT && ab <= B_FLOWER_Y) chData[s][bi + 1] = 0;
+        }
         chData[s][bi] = (byte) b;
         topGen++;   // invalida el cache de alturas
         chDirty[s] = true;
@@ -601,6 +606,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     int[] langIds = new int[MAX_LANGS];
     String[] langNames = new String[MAX_LANGS];
     boolean langListed;
+    int langLastSel = -1;                       // pantalla de idioma: ultima fila seleccionada (para mantenerla a la vista)
     String[] ltxt = new String[TX_MAX];           // textos del idioma activo por ID (null = usar el original)
     Hashtable txKey;                            // texto original -> ID
     String[] namesEs;
@@ -2518,6 +2524,10 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         else if (state == ST_SET) navIds = inWorld ? new int[] { A_RD, A_FOL, A_MUS, A_SFX, A_SETBACK } : new int[] { A_FOL, A_MUS, A_SFX, A_SETBACK };
         else if (state == ST_CREATE) navIds = new int[] { A_CNAME, A_CSEED, A_CMODE, A_CDIFF, A_CGO, A_CBACK };
         else if (state == ST_CONFIRM) navIds = new int[] { A_YES, A_NO };
+        else if (state == ST_LANG) {
+            navIds = new int[langN];
+            for (int i = 0; i < langN; i++) navIds[i] = 300 + i;
+        }
         else if (state == ST_WORLDS) {
             int n = worlds.size();
             navIds = new int[n + 2];
@@ -2692,6 +2702,16 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (id == A_FOL) { flatFol = !flatFol; saveSettings(); return; }
         if (id >= A_KEY0 && id < A_KEY0 + NKEY) { ksel = id - A_KEY0; openKeyPick(); return; }
         if (id >= A_PICK0 && id <= A_PICK0 + NACT) { pickAssign(id - A_PICK0); return; }
+        if (id >= 300 && id < 300 + MAX_LANGS) {   // pantalla de inicio: elegir idioma
+            int li = id - 300;
+            if (li < langN) {
+                lang = langIds[li];
+                applyLang();
+                saveSettings();
+                go(ST_MENU);
+            }
+            return;
+        }
         if (id >= 200) { askDelete(id - 200); return; }
         if (id >= 100) {
             int i = id - 100;
@@ -2996,7 +3016,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             if (state == ST_INV) { tcInvDrag(x, y); return; }
             if (!tpDown) return;
             if (Math.abs(y - tpY) > 8) tpDrag = true;
-            if (tpDrag && (state == ST_WORLDS || (state == ST_KEYS && kpick))) {
+            if (tpDrag && (state == ST_WORLDS || state == ST_LANG || (state == ST_KEYS && kpick))) {
                 int step = (state == ST_KEYS) ? pkRow + 1 : btnH + 3;
                 if (step < 4) step = 4;
                 wScroll = tpScroll0 + (tpY - y) / step;
@@ -3790,7 +3810,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             int ix = ifloor(ex + dx * d), iy = ifloor(ey + dy * d), iz = ifloor(ez + dz * d);
             if (ix != lx || iy != ly || iz != lz) {
                 int hb = blockAt(ix, iy, iz);
-                if (hb != 0 && (bk || (hb != B_WATER && hb != B_LAVA)) && hb != B_PORTAL && hb != B_DOOR_LO && hb != B_DOOR_UO && hb != B_TUFT) {   // el pasto alto es solo decoracion: el rayo lo atraviesa
+                if (hb != 0 && (bk || (hb != B_WATER && hb != B_LAVA)) && hb != B_PORTAL && hb != B_DOOR_LO && hb != B_DOOR_UO ) {
                     tx = ix; ty = iy; tz = iz;
                     ax = lx; ay = ly; az = lz;
                     tDist = d;
@@ -4142,9 +4162,10 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     }
 
     void placeBlock(int id) {
+        if (ty >= 0 && blockAt(tx, ty, tz) == B_TUFT) { ax = tx; ay = ty; az = tz; }   // el pasto alto se reemplaza al colocar
         if (ay < 0 || ay >= H) return;
         int cur = blockAt(ax, ay, az);
-        if (cur != 0 && cur != B_WATER && cur != B_LAVA) return;
+        if (cur != 0 && cur != B_WATER && cur != B_LAVA && cur != B_TUFT) return;
         if (id == I_DOOR) {
             if (ay + 1 >= H) return;
             int up = blockAt(ax, ay + 1, az);
@@ -7132,6 +7153,34 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (wScroll + vis < n) txt("v", sw - 4, bot - font.getHeight(), 0xFFFFFF, Graphics.TOP | Graphics.RIGHT);
     }
 
+    // pantalla de inicio: el jugador elige el idioma entre los de idiomas.txt
+    void paintLang() {
+        metrics();
+        drawDirt(50);
+        title("Idioma / Language", 4, fontMid, 0xFFFFFF, 0x202020);
+        int top = 4 + fontMid.getHeight() + 10, bot = sh - 4, step = btnH + 3;
+        int vis = (bot - top + 3) / step;
+        if (vis < 1) vis = 1;
+        int maxS = langN - vis;
+        if (maxS < 0) maxS = 0;
+        if (navSel != langLastSel) {
+            if (navSel < wScroll) wScroll = navSel;
+            if (navSel >= wScroll + vis) wScroll = navSel - vis + 1;
+            langLastSel = navSel;
+        }
+        if (wScroll > maxS) wScroll = maxS;
+        if (wScroll < 0) wScroll = 0;
+        for (int r = 0; r < vis; r++) {
+            int i = wScroll + r;
+            if (i >= langN) break;
+            int y = top + r * step;
+            drawBtn(btnX, y, btnW, btnH, langNames[i], isSel(300 + i));
+            addHit(btnX, y, btnW, btnH, 300 + i);
+        }
+        if (wScroll > 0) txt("^", sw - 4, top, 0xFFFFFF, Graphics.TOP | Graphics.RIGHT);
+        if (wScroll + vis < langN) txt("v", sw - 4, bot - font.getHeight(), 0xFFFFFF, Graphics.TOP | Graphics.RIGHT);
+    }
+
     void paintCreate() {
         metrics();
         drawDirt(50);
@@ -7374,6 +7423,8 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
                 paintSettings();
             } else if (state == ST_KEYS) {
                 paintKeys();
+            } else if (state == ST_LANG) {
+                paintLang();
             } else if (state == ST_END) {
                 paintEnd();
             } else if (state == ST_INV) {
