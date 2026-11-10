@@ -89,15 +89,21 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             ST_WORLDS = 6, ST_CREATE = 7, ST_CONFIRM = 8;
     static final int A_PLAY = 1, A_QUIT = 2, A_RESUME = 3, A_SETTINGS = 4, A_TOMENU = 5, A_RD = 6, A_SETBACK = 7,
             A_NEW = 8, A_WBACK = 9, A_CNAME = 10, A_CSEED = 11, A_CGO = 12, A_CBACK = 13, A_YES = 14, A_NO = 15, A_CMODE = 16, A_LANG = 17,
-            A_CTRL = 18, A_KEY0 = 40, A_KRESET = 52, A_KBACK = 53;
+            A_CTRL = 18, A_KEY0 = 40, A_KRESET = 60, A_KBACK = 61, A_PICK0 = 70;   // A_KEY0..+13 = teclas del esquema; A_PICK0..+14 = acciones del selector
     static final int ST_KEYS = 9, ST_END = 10;
-    static final int A_SND = 20, A_MUS = 21, A_SFX = 22;   // sonido: menu / volumen de musica / volumen de efectos
-    // acciones reasignables (menu Controles). bind[] guarda la tecla logica: 0-9, 10 = *, 11 = #, 12 = L, 13 = R
-    static final int NACT = 12, ACT_FW = 0, ACT_BK = 1, ACT_TL = 2, ACT_TR = 3, ACT_JUMP = 4, ACT_UP = 5, ACT_DOWN = 6,
-            ACT_MINE = 7, ACT_INV = 8, ACT_HPREV = 9, ACT_HNEXT = 10, ACT_PAUSE = 11;
-    static final int[] BIND_DEF = { 2, 8, 4, 6, 5, 7, 9, 10, 0, 1, 3, 12 };
+    static final int A_SND = 20, A_MUS = 21, A_SFX = 22, A_FOL = 23;   // sonido: menu / volumen de musica / volumen de efectos
+    // Controles: cada tecla logica (0-9, 10 = *, 11 = #, 12 = LSK, 13 = RSK) tiene UNA accion (km[tecla], -1 = ninguna);
+    // una accion puede estar en varias teclas. El esquema del menu Controles edita km[].
+    static final int NKEY = 14;
+    static final int NACT = 14, ACT_FW = 0, ACT_BK = 1, ACT_TL = 2, ACT_TR = 3, ACT_JUMP = 4, ACT_UP = 5, ACT_DOWN = 6,
+            ACT_MINE = 7, ACT_INV = 8, ACT_HPREV = 9, ACT_HNEXT = 10, ACT_PAUSE = 11, ACT_SL = 12, ACT_SR = 13;
+    // por defecto: 0 saltar, 1 mirar abajo, 2 adelante, 3 mirar arriba, 4 girar izq., 5 romper/colocar, 6 girar der.,
+    // 7 mover izq., 8 retroceder, 9 mover der., * hotbar anterior, # hotbar siguiente, LSK inventario, RSK pausa
+    static final int[] KEY_DEF = { ACT_JUMP, ACT_DOWN, ACT_FW, ACT_UP, ACT_TL, ACT_MINE, ACT_TR, ACT_SL, ACT_BK, ACT_SR,
+            ACT_HPREV, ACT_HNEXT, ACT_INV, ACT_PAUSE };
     static final String[] ACT_NAME = { "Adelante", "Retroceder", "Girar izq.", "Girar der.", "Saltar", "Mirar arriba",
-            "Mirar abajo", "Romper / colocar", "Inventario", "Hotbar anterior", "Hotbar siguiente", "Pausa" };
+            "Mirar abajo", "Romper / colocar", "Inventario", "Hotbar anterior", "Hotbar siguiente", "Pausa",
+            "Mover izq.", "Mover der." };
     static final int J_ENTER = 1, J_APPLY = 2, J_LEAVE = 3, J_SAVE = 4, J_FLUSH = 5;
 
     static final int B_AIR = 0, B_GRASS = 1, B_DIRT = 2, B_STONE = 3, B_LOG = 4,
@@ -194,9 +200,15 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     int tick;
 
     int state = ST_MENU;
-    int[] bind = { 2, 8, 4, 6, 5, 7, 9, 10, 0, 1, 3, 12 };
-    int listenAct = -1, listenT;      // accion esperando una tecla / ticks restantes (100 = 5 s)
-    boolean mineOn;                   // romper/colocar mantenido (tecla o tactil)
+    int[] km = { ACT_JUMP, ACT_DOWN, ACT_FW, ACT_UP, ACT_TL, ACT_MINE, ACT_TR, ACT_SL, ACT_BK, ACT_SR,
+            ACT_HPREV, ACT_HNEXT, ACT_INV, ACT_PAUSE };   // tecla logica -> accion (-1 = ninguna)
+    // esquema de controles: ksel = celda elegida (0-13 teclas, 14 = Restaurar, 15 = Atras); kpick = selector de accion abierto
+    int ksel = 5, kpSel;
+    boolean kpick, kpFollow;
+    boolean flatFol;                  // follaje plano: algas, pasto marino, cana y cultivos como 1-2 planos en vez de cajas 3D
+    int pkRow = 16;
+    int[] kbX = new int[16], kbY = new int[16], kbW = new int[16], kbH = new int[16];
+    boolean mineOn;                  // romper/colocar mantenido (tecla o tactil)
     boolean[] kd = new boolean[14];   // 0-9, 10 = *, 11 = #, 12 = L, 13 = R
     int layout = 0;                   // 0 = A (caminar), 1 = B (camara)
     boolean dbgOn = Minecraft2D.DEBUG;
@@ -220,7 +232,10 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     int[] mobKey = new int[64];
     int[] mobOrd = new int[64];
     int[] invX, invZ, invY = new int[H];
-    int spawnTimer, hostTimer, fishState, fishX, fishY, fishZ, fishT;
+    int spawnTimer, hostTimer, fishState, fishX, fishY, fishZ, fishT;   // fishState: 0 nada, 1 esperando, 3 minijuego
+    float fgM, fgD = 1f, fgC = 0.5f, fgS = 0.3f, fgTC = 0.5f, fgTS = 0.3f;   // minijuego: marca, sentido, centro y tamano de la zona verde (+ objetivos)
+    int fgYou, fgFish, fgT, fgFlash, fgLast;
+    boolean fgOk;
     int fwTick = -100, shX, shZ, shY;   // correr (doble clic adelante) y naufragio actual
     boolean sprint;
     // dia / noche
@@ -300,7 +315,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     Mob tMob;
 
     // accion
-    int starTicks, attackCd, mineProg, mineX = -1, mineY = -1, mineZ = -1;
+    int starTicks, attackCd, mineProg, mineX = NONE, mineY = -1, mineZ = -1;
     boolean starConsumed;
 
     // inventario: 0-35 inventario (0-8 hotbar), 36-44 grilla, 45 resultado
@@ -699,7 +714,28 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         "Cristales: ",   // 106
         "Musica: ",   // 107
         "Efectos: ",   // 108
-        "Sonido"   // 109
+        "Sonido",   // 109
+        "Mover izq.",   // 110
+        "Mover der.",   // 111
+        "Sin accion",   // 112
+        "Flechas: tecla / 5: cambiar",   // 113
+        "2/8: elegir / 5: asignar",   // 114
+        "Sin tecla: ",   // 115
+        "Tecla: ",   // 116
+        "Follaje: ",   // 117
+        "3D",   // 118
+        "Plano",   // 119
+        "Mesa de encantamiento",   // 120
+        "Nivel",   // 121
+        "Filo",   // 122
+        "Retroceso",   // 123
+        "Eficiencia",   // 124
+        "Irrompibilidad",   // 125
+        "Fortuna",   // 126
+        "Botin",   // 127
+        "Tu",   // 128
+        "Pez",   // 129
+        "Pica! Zona verde"   // 130
     };
 
     String L(String t) {
@@ -2236,7 +2272,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         for (int i = 0; i < kd.length; i++) kd[i] = false;
         mineOn = false;
         tFw = false; tBk = false; tL = false; tR = false; tJp = false; tcMode = 0; tcInvDown = false;
-        starTicks = 0; starConsumed = false; mineProg = 0; mineX = -1;
+        starTicks = 0; starConsumed = false; mineProg = 0; mineX = NONE;
     }
 
     void resetPlayerState() {
@@ -2419,10 +2455,14 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
                 byte[] b = r.getRecord(1);
                 if (b.length > 0 && b[0] >= 0 && b[0] < RD_OPT.length) rdIdx = b[0];
                 if (b.length > 1 && b[1] >= 0) lang = b[1];   // ID de idioma; applyLang() lo valida
-                if (b.length >= 2 + NACT) for (int i = 0; i < NACT; i++) if (b[2 + i] >= 0 && b[2 + i] <= 13) bind[i] = b[2 + i];
-                if (b.length >= 4 + NACT) {
-                    if (b[2 + NACT] >= 0 && b[2 + NACT] <= 5) musLv = b[2 + NACT];
-                    if (b[3 + NACT] >= 0 && b[3 + NACT] <= 5) sfxLv = b[3 + NACT];
+                if (b.length >= 5 + NKEY && b[4] == 2) {   // formato 2: b[2]/b[3] = volumenes, b[5..] = accion de cada tecla
+                    if (b[2] >= 0 && b[2] <= 5) musLv = b[2];
+                    if (b[3] >= 0 && b[3] <= 5) sfxLv = b[3];
+                    for (int i = 0; i < NKEY; i++) if (b[5 + i] >= -1 && b[5 + i] < NACT) km[i] = b[5 + i];
+                    if (b.length > 5 + NKEY) flatFol = b[5 + NKEY] != 0;
+                } else if (b.length >= 16) {   // formato viejo (accion -> tecla): se conservan los volumenes, los controles quedan por defecto
+                    if (b[14] >= 0 && b[14] <= 5) musLv = b[14];
+                    if (b[15] >= 0 && b[15] <= 5) sfxLv = b[15];
                 }
             }
         } catch (Exception e) {}
@@ -2434,10 +2474,11 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         RecordStore r = null;
         try {
             r = RecordStore.openRecordStore(CFG_STORE, true);
-            byte[] b = new byte[4 + NACT];
+            byte[] b = new byte[6 + NKEY];
             b[0] = (byte) rdIdx; b[1] = (byte) lang;
-            b[2 + NACT] = (byte) musLv; b[3 + NACT] = (byte) sfxLv;
-            for (int i = 0; i < NACT; i++) b[2 + i] = (byte) bind[i];
+            b[2] = (byte) musLv; b[3] = (byte) sfxLv; b[4] = 2;
+            for (int i = 0; i < NKEY; i++) b[5 + i] = (byte) km[i];
+            b[5 + NKEY] = (byte) (flatFol ? 1 : 0);
             if (r.getNumRecords() > 0) r.setRecord(1, b, 0, b.length);
             else r.addRecord(b, 0, b.length);
         } catch (Exception e) {}
@@ -2452,13 +2493,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     void buildNav() {
         if (state == ST_MENU) navIds = new int[] { A_PLAY, A_CTRL, A_SND, A_QUIT };
         else if (state == ST_PAUSE) navIds = new int[] { A_RESUME, A_SETTINGS, A_LANG, A_TOMENU };
-        else if (state == ST_SET) navIds = inWorld ? new int[] { A_RD, A_MUS, A_SFX, A_SETBACK } : new int[] { A_MUS, A_SFX, A_SETBACK };
-        else if (state == ST_KEYS) {
-            navIds = new int[NACT + 2];
-            for (int i = 0; i < NACT; i++) navIds[i] = A_KEY0 + i;
-            navIds[NACT] = A_KRESET;
-            navIds[NACT + 1] = A_KBACK;
-        }
+        else if (state == ST_SET) navIds = inWorld ? new int[] { A_RD, A_FOL, A_MUS, A_SFX, A_SETBACK } : new int[] { A_FOL, A_MUS, A_SFX, A_SETBACK };
         else if (state == ST_CREATE) navIds = new int[] { A_CNAME, A_CSEED, A_CMODE, A_CGO, A_CBACK };
         else if (state == ST_CONFIRM) navIds = new int[] { A_YES, A_NO };
         else if (state == ST_WORLDS) {
@@ -2481,10 +2516,6 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     void navMove(int d) {
         if (navN <= 0) return;
         navSel = (navSel + d + navN) % navN;
-        if (state == ST_KEYS) {
-            if (navSel < wScroll) wScroll = navSel;
-            if (navSel >= wScroll + wVis) wScroll = navSel - wVis + 1;
-        }
         if (state == ST_WORLDS) {
             int i = navSel - 1;
             if (i >= 0 && i < worlds.size()) {
@@ -2636,7 +2667,9 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (id == A_SND) { go(ST_SET); return; }
         if (id == A_MUS) { lvStep(0, 1); return; }
         if (id == A_SFX) { lvStep(1, 1); return; }
-        if (id >= A_KEY0 && id < A_KEY0 + NACT) { listenAct = id - A_KEY0; listenT = 100; return; }   // 5 s para pulsar la tecla
+        if (id == A_FOL) { flatFol = !flatFol; saveSettings(); return; }
+        if (id >= A_KEY0 && id < A_KEY0 + NKEY) { ksel = id - A_KEY0; openKeyPick(); return; }
+        if (id >= A_PICK0 && id <= A_PICK0 + NACT) { pickAssign(id - A_PICK0); return; }
         if (id >= 200) { askDelete(id - 200); return; }
         if (id >= 100) {
             int i = id - 100;
@@ -2650,8 +2683,8 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             case A_PLAY: openWorlds(); break;
             case A_QUIT: midlet.quit(); break;
             case A_LANG: nextLang(); applyLang(); saveSettings(); break;
-            case A_CTRL: listenAct = -1; go(ST_KEYS); break;
-            case A_KRESET: for (int i = 0; i < NACT; i++) bind[i] = BIND_DEF[i]; listenAct = -1; saveSettings(); break;
+            case A_CTRL: kpick = false; ksel = 5; go(ST_KEYS); break;
+            case A_KRESET: System.arraycopy(KEY_DEF, 0, km, 0, NKEY); kpick = false; saveSettings(); break;
             case A_KBACK: menuBack(); break;
             case A_RESUME: state = ST_PLAY; clearKeys(); break;
             case A_SETTINGS: go(ST_SET); break;
@@ -2678,36 +2711,110 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     void menuBack() {
         if (state == ST_PAUSE) { state = ST_PLAY; clearKeys(); }
         else if (state == ST_SET) closeSettings();
-        else if (state == ST_KEYS) { listenAct = -1; saveSettings(); go(ST_MENU); navSel = 1; }
+        else if (state == ST_KEYS) {
+            if (kpick) kpick = false;
+            else { saveSettings(); go(ST_MENU); navSel = 1; }
+        }
         else if (state == ST_WORLDS) openMain();
         else if (state == ST_CREATE || state == ST_CONFIRM) openWorlds();
     }
 
-    boolean isBound(int k) {
-        for (int i = 0; i < NACT; i++) if (bind[i] == k) return true;
+    // ---------------------------------------------------------------- controles: mapeo tecla -> accion
+    boolean actDown(int a) {
+        for (int k = 0; k < NKEY; k++) if (km[k] == a && kd[k]) return true;
         return false;
     }
 
-    boolean isDup(int a) {
-        for (int i = 0; i < NACT; i++) if (i != a && bind[i] == bind[a]) return true;
+    boolean actBound(int a) {
+        for (int k = 0; k < NKEY; k++) if (km[k] == a) return true;
         return false;
     }
 
-    String keyName(int k) {
-        if (k >= 0 && k <= 9) {
-            String d = String.valueOf(k);
-            return L(k == 2 ? "2/Arr" : k == 4 ? "4/Izq" : k == 5 ? "5/OK" : k == 6 ? "6/Der" : k == 8 ? "8/Abj" : d);
+    // primera accion sin ninguna tecla (-1 = todas tienen)
+    int firstUnbound() {
+        for (int a = 0; a < NACT; a++) if (!actBound(a)) return a;
+        return -1;
+    }
+
+    static String keyShort(int k) {
+        if (k >= 0 && k <= 9) return String.valueOf(k);
+        return k == 10 ? "*" : (k == 11 ? "#" : (k == 12 ? "LSK" : "RSK"));
+    }
+
+    // posiciones del esquema: fila 0 = LSK . RSK; filas 1-4 = teclado numerico; fila 5 = Restaurar / Atras (celdas 14 y 15)
+    void layoutKeys() {
+        int lh = font.getHeight();
+        int gap = 3;
+        int top = 3 + fontMid.getHeight() + 4;
+        int bottom = sh - lh * 2 - 6;
+        int bh = lh + 8;
+        int cw = (sw - 8 - gap * 2) / 3;
+        if (cw > 80) cw = 80;
+        int ch = (bottom - top - gap * 5 - bh) / 5;
+        if (ch > 40) ch = 40;
+        if (ch < lh + 4) ch = lh + 4;
+        int gw = cw * 3 + gap * 2, x0 = (sw - gw) / 2;
+        int[][] g = { { 12, -1, 13 }, { 1, 2, 3 }, { 4, 5, 6 }, { 7, 8, 9 }, { 10, 0, 11 } };
+        for (int r = 0; r < 5; r++) {
+            for (int c = 0; c < 3; c++) {
+                int k = g[r][c];
+                if (k < 0) continue;
+                kbX[k] = x0 + c * (cw + gap); kbY[k] = top + r * (ch + gap); kbW[k] = cw; kbH[k] = ch;
+            }
         }
-        return L(k == 10 ? "*" : k == 11 ? "#" : k == 12 ? "L / Izq" : "R / Der");
+        int y5 = top + 5 * (ch + gap), hw = (gw - gap) / 2;
+        kbX[14] = x0; kbY[14] = y5; kbW[14] = hw; kbH[14] = bh;
+        kbX[15] = x0 + hw + gap; kbY[15] = y5; kbW[15] = gw - hw - gap; kbH[15] = bh;
+    }
+
+    void keyNav(int k) {
+        layoutKeys();
+        int c = ksel, best = -1, bs = 0x7fffffff;
+        int cx = kbX[c] + kbW[c] / 2, cy = kbY[c] + kbH[c] / 2;
+        for (int j = 0; j < 16; j++) {
+            if (j == c || kbW[j] <= 0) continue;
+            int dx = kbX[j] + kbW[j] / 2 - cx, dy = kbY[j] + kbH[j] / 2 - cy;
+            boolean ok = (k == 2) ? dy < -2 : ((k == 8) ? dy > 2 : ((k == 4) ? dx < -2 : dx > 2));
+            if (!ok) continue;
+            if ((k == 4 || k == 6) && Math.abs(dy) > 2) continue;   // izquierda/derecha: solo dentro de la misma fila
+            int score = (k == 2 || k == 8) ? Math.abs(dy) + 3 * Math.abs(dx) : Math.abs(dx);
+            if (score < bs) { bs = score; best = j; }
+        }
+        if (best >= 0) ksel = best;
+    }
+
+    void openKeyPick() {
+        kpick = true;
+        kpFollow = true;
+        kpSel = (km[ksel] >= 0) ? km[ksel] : NACT;   // la ultima fila es "Sin accion"
+    }
+
+    void kpMove(int d) {
+        kpSel = (kpSel + d + NACT + 1) % (NACT + 1);
+        kpFollow = true;
+    }
+
+    void pickAssign(int i) {
+        km[ksel] = (i < NACT) ? i : -1;
+        kpick = false;
+        saveSettings();
+    }
+
+    void keysKey(int k) {
+        if (kpick) {
+            if (k == 2) kpMove(-1);
+            else if (k == 8) kpMove(1);
+            else if (k == 5) pickAssign(kpSel);
+            else if (k == 0 || k == 12 || k == 13) kpick = false;
+            return;
+        }
+        if (k == 2 || k == 4 || k == 6 || k == 8) keyNav(k);
+        else if (k == 5) activate(ksel < NKEY ? A_KEY0 + ksel : (ksel == 14 ? A_KRESET : A_KBACK));
+        else if (k == 0 || k == 12 || k == 13) menuBack();
     }
 
     void menuKey(int k) {
-        if (state == ST_KEYS && listenAct >= 0) {   // esperando la tecla nueva: se asigna aunque ya este en uso (se marca en rojo)
-            bind[listenAct] = k;
-            listenAct = -1;
-            saveSettings();
-            return;
-        }
+        if (state == ST_KEYS) { keysKey(k); return; }
         if (k == 2) navMove(-1);
         else if (k == 8) navMove(1);
         else if (k == 5) activate(navIds[navSel]);
@@ -2716,6 +2823,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             if (na == A_RD) rdStep(k == 6 ? 1 : -1);
             else if (na == A_MUS) lvStep(0, k == 6 ? 1 : -1);
             else if (na == A_SFX) lvStep(1, k == 6 ? 1 : -1);
+            else if (na == A_FOL) { flatFol = !flatFol; saveSettings(); }
         } else if (k == 10 && state == ST_WORLDS) {
             int id = navIds[navSel];
             if (id >= 100 && id < 200) activate(id + 100);
@@ -2784,23 +2892,28 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (k < 0) return;
         synchronized (lock) {
             if (state == ST_PLAY) {
-                if (k == bind[ACT_PAUSE] || (k == 13 && !isBound(13))) { openPause(); return; }
+                int a = km[k];
+                // si ninguna tecla tiene "Pausa", RSK pausa igual (para no quedar sin menu)
+                if (a == ACT_PAUSE || (k == 13 && !actBound(ACT_PAUSE))) { openPause(); return; }
                 kd[k] = true;
-                if (k == bind[ACT_FW]) { if (tick - fwTick < 8) sprint = true; fwTick = tick; }
-                if (creative && k == bind[ACT_JUMP]) {   // doble toque de salto: volar / aterrizar
+                if (a == ACT_FW) { if (tick - fwTick < 8) sprint = true; fwTick = tick; }
+                if (creative && a == ACT_JUMP) {   // doble toque de salto: volar / aterrizar
                     if (tick - jumpTick < 8) { flying = !flying; vy = 0; fallDist = 0; jumpTick = -100; }
                     else jumpTick = tick;
                 }
-                if (k == bind[ACT_INV]) openInv(2);
-                else if (k == bind[ACT_HPREV]) { sel = (sel + 8) % 9; labelT = 40; }
-                else if (k == bind[ACT_HNEXT]) { sel = (sel + 1) % 9; labelT = 40; }
-                else if (k == bind[ACT_MINE]) { mineOn = true; starTicks = 1; starConsumed = false; mineProg = 0; }
+                if (a == ACT_INV) openInv(2);
+                else if (a == ACT_HPREV) { sel = (sel + 8) % 9; labelT = 40; }
+                else if (a == ACT_HNEXT) { sel = (sel + 1) % 9; labelT = 40; }
+                else if (a == ACT_MINE) {
+                    if (fishState == 3) fishHit();
+                    else { mineOn = true; starTicks = 1; starConsumed = false; mineProg = 0; }
+                }
             } else if (state == ST_END) {
                 if (k == 5 || k == 12 || k == 13) endBack();
             } else if (state == ST_DEAD) {
                 if (k == 5) respawn();
             } else if (state == ST_INV) {
-                if (k == 0 || k == bind[ACT_INV] || k == 12 || k == 13) closeInv();
+                if (k == 0 || km[k] == ACT_INV || k == 12 || k == 13) closeInv();
                 else if (craftN == TRADE && (k == 1 || k == 3)) tradeMove(k == 3 ? 1 : -1);
                 else if (craftN == ENCH && (k == 1 || k == 3)) enchMove(k == 3 ? 1 : -1);
                 else if (palMode() && (k == 1 || k == 3)) palFlip(k == 3 ? 1 : -1);
@@ -2820,7 +2933,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (k < 0) return;
         synchronized (lock) {
             if (state == ST_INV && (k == 2 || k == 4 || k == 6 || k == 8)) moveCursor(k);
-            else if (isMenu() && listenAct < 0 && (k == 2 || k == 8)) menuKey(k);
+            else if (isMenu() && (k == 2 || k == 8)) menuKey(k);
         }
     }
 
@@ -2829,9 +2942,9 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (k < 0) return;
         synchronized (lock) {
             kd[k] = false;
-            if (k == bind[ACT_MINE]) {
+            if (km[k] == ACT_MINE && !actDown(ACT_MINE)) {
                 if (state == ST_PLAY && !starConsumed && starTicks > 0 && starTicks <= 6) doTap();
-                mineOn = false; starTicks = 0; starConsumed = false; mineProg = 0; mineX = -1;
+                mineOn = false; starTicks = 0; starConsumed = false; mineProg = 0; mineX = NONE;
             }
         }
     }
@@ -2860,8 +2973,8 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             if (state == ST_INV) { tcInvDrag(x, y); return; }
             if (!tpDown) return;
             if (Math.abs(y - tpY) > 8) tpDrag = true;
-            if (tpDrag && state == ST_WORLDS) {
-                int step = btnH + 3;
+            if (tpDrag && (state == ST_WORLDS || (state == ST_KEYS && kpick))) {
+                int step = (state == ST_KEYS) ? pkRow + 1 : btnH + 3;
                 if (step < 4) step = 4;
                 wScroll = tpScroll0 + (tpY - y) / step;
             }
@@ -2886,6 +2999,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
                     return;
                 }
             }
+            if (state == ST_KEYS && kpick) kpick = false;   // tocar fuera del selector lo cierra
         }
     }
 
@@ -3187,7 +3301,6 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             // red de seguridad: si el dedo ya no esta apoyado, ningun control tactil puede quedar activo
             if (!tpDown && (tcMode != 0 || tFw || tBk || tL || tR || tJp)) tcCancel();
             if (labelT > 0) labelT--;
-            if (listenAct >= 0 && --listenT <= 0) listenAct = -1;
             if (msgT > 0) msgT--;
             if (dmgFlash > 0) dmgFlash--;
             if (tick % 20 == 0) musicCtx();
@@ -3231,12 +3344,14 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
 
     void updatePlayer() {
         boolean fw, bk, jp, up, down;
-        fw = kd[bind[ACT_FW]]; bk = kd[bind[ACT_BK]]; jp = kd[bind[ACT_JUMP]];
-        up = kd[bind[ACT_UP]]; down = kd[bind[ACT_DOWN]];
+        fw = actDown(ACT_FW); bk = actDown(ACT_BK); jp = actDown(ACT_JUMP);
+        up = actDown(ACT_UP); down = actDown(ACT_DOWN);
         fw |= tFw; bk |= tBk; jp |= tJp;
+        boolean sl = actDown(ACT_SL), sr = actDown(ACT_SR);   // desplazamiento lateral
+        float sd = (sr ? 1f : 0f) - (sl ? 1f : 0f);
         if (!fw) sprint = false;
-        if (kd[bind[ACT_TL]] || tL) yaw -= LOOK;
-        if (kd[bind[ACT_TR]] || tR) yaw += LOOK;
+        if (actDown(ACT_TL) || tL) yaw -= LOOK;
+        if (actDown(ACT_TR) || tR) yaw += LOOK;
         if (up) pitch += LOOK;
         if (down) pitch -= LOOK;
         if (pitch > 1.4f) pitch = 1.4f;
@@ -3255,19 +3370,22 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             if (fw) { fmx += sn * cpc * sp2; fmz += cs * cpc * sp2; fmy += spc * sp2; }
             if (bk) { fmx -= sn * cpc * sp2; fmz -= cs * cpc * sp2; fmy -= spc * sp2; }
             if (jp) fmy += sp2;
+            if (sd != 0f) { fmx += cs * sd * sp2; fmz -= sn * sd * sp2; }
             if (fmx != 0 && !boxCollides(px + fmx, py, pz, HW, 1.8f)) px += fmx;
             if (fmz != 0 && !boxCollides(px, py, pz + fmz, HW, 1.8f)) pz += fmz;
             if (fmy != 0 && !boxCollides(px, py + fmy, pz, HW, 1.8f)) py += fmy;
             if (py < 1f && dim != 2) py = 1f;
             vy = 0; fallDist = 0; onGround = false;
-            moving = (fw || bk);
+            moving = (fw || bk || sd != 0f);
             return;
         }
         float stx0 = px, stz0 = pz;
         float mx = 0, mz = 0;
-        if (fw) { mx += sn * SPD; mz += cs * SPD; }
-        if (bk) { mx -= sn * SPD; mz -= cs * SPD; }
-        moving = (fw || bk);
+        float fdr = (fw ? 1f : 0f) - (bk ? 1f : 0f);
+        mx = (sn * fdr + cs * sd) * SPD;
+        mz = (cs * fdr - sn * sd) * SPD;
+        if (fdr != 0f && sd != 0f) { mx *= 0.7071f; mz *= 0.7071f; }   // en diagonal no va mas rapido
+        moving = (fw || bk || sd != 0f);
         boolean inW = waterAtF(px, py + 0.4f, pz) || waterAtF(px, py + 1.2f, pz)
                 || lavaAtF(px, py + 0.4f, pz) || lavaAtF(px, py + 1.2f, pz);
         boolean swim = inW && !lavaAtF(px, py + 0.4f, pz) && !lavaAtF(px, py + 1.2f, pz)
@@ -3282,6 +3400,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             float s2 = SPD * ((sprint && fw) ? 1.2f : 0.6f);
             float cpc = (float) Math.cos(pitch), spc = (float) Math.sin(pitch), dr = fw ? 1f : -1f;
             float smx = dr * sn * cpc * s2, smz = dr * cs * cpc * s2, smy = dr * spc * s2;
+            if (sd != 0f) { smx += cs * sd * s2; smz -= sn * sd * s2; }
             if (smy > 0 && !waterAtF(px, py + 1.9f, pz)) smy = 0;
             boolean bx = boxCollides(px + smx, py, pz, HW, 1.8f), bz = boxCollides(px, py, pz + smz, HW, 1.8f);
             if (!bx) px += smx;
@@ -3463,7 +3582,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             while (n < 20 && wtr(blockAt(tx, cy + 1, tz))) { cy++; n++; }
             x = tx + 0.5f; z = tz + 0.5f; y = cy + 0.9f;
         } else {
-            if (ax < 0 || blockAt(ax, ay, az) != 0) return;
+            if (ay < 0 || blockAt(ax, ay, az) != 0) return;
             x = ax + 0.5f; z = az + 0.5f; y = ay + 0.001f;
         }
         Mob nm = new Mob();
@@ -3522,8 +3641,9 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         } else { m.ang += 2.5f; m.vy = -m.vy; m.timer = 10; }
     }
 
-    // cana de pescar: clic lanza al agua; tras X ticks pica (30 ticks de ventana); clic al picar = 70% de pescar
+    // cana de pescar: clic lanza al agua; al picar empieza el minijuego (5 puntos para el jugador = pesca, 5 para el pez = se escapa)
     void useRod() {
+        if (fishState == 3) { fishHit(); return; }
         if (fishState == 0) {
             float sy = (float) Math.sin(yaw), cy = (float) Math.cos(yaw), sp = (float) Math.sin(pitch), cp = (float) Math.cos(pitch);
             for (int i = 2; i <= 16; i++) {
@@ -3536,24 +3656,55 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             say("Apunta al agua");
             return;
         }
-        if (fishState == 2 && rnd(100) < 70) {
+        say("Nada todavia");   // recoger el sedal antes de que pique
+        fishState = 0;
+    }
+
+    // tecla de accion durante el minijuego: marca dentro de la zona verde = punto del jugador, fuera = punto del pez
+    void fishHit() {
+        if (fishState != 3 || tick - fgLast < 5) return;
+        fgLast = tick;
+        fgOk = fgM >= fgC - fgS / 2f && fgM <= fgC + fgS / 2f;
+        fgFlash = 8;
+        if (fgOk) { fgYou++; Sfx.play(Sfx.S_POP, 60); } else { fgFish++; Sfx.play(Sfx.S_SPLASH, 40); }
+        if (fgYou >= 5) {
             int r = rnd(100);
             addItem(r < 50 ? I_COD : (r < 80 ? I_SALMON : (r < 95 ? I_TROPICAL : I_STRING)), 1, 0);
             Sfx.play(Sfx.S_SPLASH, 70);
-            Sfx.play(Sfx.S_POP, 60);
             say("Pescaste algo!");
-        } else say(fishState == 2 ? "Se escapo" : "Nada todavia");
-        fishState = 0;
+            fishState = 0;
+        } else if (fgFish >= 5) {
+            say("Se escapo");
+            fishState = 0;
+        }
+    }
+
+    float fgStep(float cur, float target, float st) {
+        float d = target - cur;
+        return d > st ? cur + st : (d < -st ? cur - st : target);
     }
 
     void updateFishing() {
         if (fishState == 0) return;
         if (slId[sel] != I_ROD || blockAt(fishX, fishY, fishZ) != B_WATER
                 || Math.abs(fishX + 0.5f - px) > 20f || Math.abs(fishZ + 0.5f - pz) > 20f) { fishState = 0; return; }
-        if (--fishT <= 0) {
-            if (fishState == 1) { fishState = 2; fishT = 30; say("Pica! Clic ya"); Sfx.play(Sfx.S_BITE, 100); }
-            else { fishState = 0; say("Se escapo"); }
+        if (fishState == 1) {
+            if (--fishT <= 0) {
+                fishState = 3; fgYou = 0; fgFish = 0; fgM = 0.5f; fgD = 1f; fgC = 0.5f; fgS = 0.32f; fgTC = 0.5f; fgTS = 0.32f; fgT = 20; fgFlash = 0; fgLast = tick;
+                say("Pica! Zona verde"); Sfx.play(Sfx.S_BITE, 100);
+            }
+            return;
         }
+        // minijuego: la marca sube y baja (mas rapido con cada punto) y la zona verde se mueve y cambia de tamano
+        float sp = 0.022f + 0.003f * (fgYou + fgFish);
+        fgM += fgD * sp;
+        if (fgM >= 1f) { fgM = 1f; fgD = -1f; } else if (fgM <= 0f) { fgM = 0f; fgD = 1f; }
+        if (--fgT <= 0) { fgTS = 0.16f + rndf() * 0.2f; fgTC = fgTS / 2f + rndf() * (1f - fgTS); fgT = 30 + rnd(50); }
+        fgS = fgStep(fgS, fgTS, 0.004f);
+        fgC = fgStep(fgC, fgTC, 0.009f);
+        if (fgC < fgS / 2f) fgC = fgS / 2f;
+        if (fgC > 1f - fgS / 2f) fgC = 1f - fgS / 2f;
+        if (fgFlash > 0) fgFlash--;
     }
 
     void updateMob(Mob m) {
@@ -3873,12 +4024,12 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             if (mineProg >= need) {
                 breakBlock(tx, ty, tz);
                 mineProg = 0;
-                mineX = -1;
+                mineX = NONE;
                 starConsumed = true;
             }
         } else {
             mineProg = 0;
-            mineX = -1;
+            mineX = NONE;
         }
     }
 
@@ -3890,6 +4041,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
 
     void doTap() {
         int id = slId[sel];
+        if (fishState == 3) { fishHit(); return; }
         if (ride != null) { dismount(); return; }
         if (tMob != null && tMob.type == 11) { mount(tMob); return; }
         if (id == I_BOAT && ty >= 0) { placeBoat(); return; }
@@ -5270,7 +5422,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         }
     }
 
-    boolean opaque(int b) { return b != 0 && b != B_CANE && b != B_CAKE && b != B_SAPLING && b != B_TORCH && b != B_WATER && !(b >= B_DOOR_LC && b <= B_DOOR_UO) && b != B_BED && b != B_LAVA && b != B_PORTAL && b != B_ENDPORTAL && (b < B_CROP0 || b > B_CROP2) && b != B_KELP && b != B_SEAGRASS; }
+    boolean opaque(int b) { return b != 0 && b != B_CANE && b != B_CAKE && b != B_SAPLING && b != B_TORCH && b != B_WATER && !(b >= B_DOOR_LC && b <= B_DOOR_UO) && b != B_BED && b != B_LAVA && b != B_PORTAL && b != B_ENDPORTAL && (b < B_CROP0 || b > B_CROP2) && b != B_KELP && b != B_SEAGRASS && b != B_ENCH && b != B_FRAME && b != B_FRAME_EYE && b != B_EGG; }
 
     int columnTop(int x, int z, byte[] cd) {
         int cx = x >> 4, cz = z >> 4, s = slotOf(cx, cz);
@@ -5811,7 +5963,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (id == I_EYE) return new String[] { "........", "..nNNn..", ".nNYYNn.", ".NYKKYN.", ".NYKKYN.", ".nNYYNn.", "..nnnn..", "........" };
         if (id == B_CANE) return new String[] { "...N.N..", "...N.N..", "..nN.Nn.", "...NnN..", "...N.N..", "..nNnN..", "...N.N..", "...N.N.." };
         if (id == B_CAKE) return new String[] { "........", "..WWRW..", ".WWWWWW.", ".TTTTTT.", ".TwTwTw.", ".TTTTTT.", ".bbbbbb.", "........" };
-        if (id == B_ENCH) return new String[] { "........", "...WW...", "..WBBW..", ".rrrrrr.", ".rrrrrr.", "..KKKK..", ".KkKKkK.", ".KKKKKK." };
+        if (id == B_ENCH) return new String[] { "........", "..bRRb..", "..bWWb..", ".rrrrrr.", "rRRRRRRr", "KKKKKKKK", "KkCKKCkK", "KKKKKKKK" };
         if (id == I_SUGAR) return new String[] { "........", "..W.W...", ".WwWW.W.", "..WwW...", ".W.WW.W.", "..wW.W..", "........", "........" };
         if (id == I_PAPER) return new String[] { "........", ".WWWWWw.", ".WwwwwW.", ".WWWWWw.", ".WwwwwW.", ".WWWWWw.", "........", "........" };
         if (id == I_BOOK) return new String[] { "........", ".bBBBBb.", ".bRRRWb.", ".bRRRWb.", ".bRRRWb.", ".bRRRWb.", ".bBBBBb.", "........" };
@@ -5869,7 +6021,41 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     }
 
     // plantita y antorcha: cajas finas, no cubos
+    // plano vertical (rectangulo o triangulo-hoja) entre (ax,az) y (bx,bz)
+    void plane(float ax, float az, float bx, float bz, float y, float h, boolean tri, float tipX, float tipZ, int col) {
+        toCam(ax, y, az, quad, 0);
+        toCam(bx, y, bz, quad, 3);
+        if (tri) {
+            toCam(tipX, y + h, tipZ, quad, 6);
+            fillPoly(quad, 3, col);
+        } else {
+            toCam(bx, y + h, bz, quad, 6);
+            toCam(ax, y + h, az, quad, 9);
+            fillPoly(quad, 4, col);
+        }
+    }
+
+    // follaje plano: dos planos cruzados (4 vertices cada uno) en vez de 3-15 caras de cajas
+    boolean drawFlat(int x, int y, int z, int b) {
+        int col;
+        float h, w;
+        boolean tri = false;
+        if (b == B_KELP) { col = 0x2F8A3A; h = 1f; w = 0.3f; }
+        else if (b == B_CANE) { col = 0x7CCB4A; h = 1f; w = 0.42f; }
+        else if (b == B_SEAGRASS) { col = 0x3FA03A; h = 0.75f; w = 0.38f; tri = true; }
+        else if (b >= B_CROP0 && b <= B_CROP2) { col = (b == B_CROP2) ? 0xC8B040 : 0x4FB03A; h = 0.35f + (b - B_CROP0) * 0.3f; w = 0.45f; }
+        else return false;
+        int lp = litPct(x + 0.5f, y + 0.5f, z + 0.5f);
+        int c1 = lp >= 100 ? col : shade(col, lp);
+        int c2 = shade(col, 88 * lp / 100);
+        float cx = x + 0.5f, cz = z + 0.5f;
+        plane(cx - w, cz - w, cx + w, cz + w, y, h, tri, cx, cz, c1);
+        plane(cx - w, cz + w, cx + w, cz - w, y, h, tri, cx, cz, c2);
+        return true;
+    }
+
     void drawSmall(int x, int y, int z, int b) {
+        if (flatFol && drawFlat(x, y, z, b)) return;
         int lp = litPct(x + 0.5f, y + 0.5f, z + 0.5f);
         float cx = x + 0.5f, cz = z + 0.5f;
         if (b == B_TORCH) {
@@ -5891,6 +6077,24 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             drawBox(cx - 0.44f, y, cz - 0.44f, cx + 0.44f, y + 0.5f, cz + 0.44f, 0xE8D8C0, lp);
             drawBox(cx - 0.44f, y + 0.5f, cz - 0.44f, cx + 0.44f, y + 0.62f, cz + 0.44f, 0xF8F0F0, lp);
             drawBox(cx - 0.05f, y + 0.62f, cz - 0.05f, cx + 0.05f, y + 0.78f, cz + 0.05f, 0xD02020, lp);
+        } else if (b == B_ENCH) {   // mesa de encantamiento: base de obsidiana 3/4 de alto, tapa roja, diamantes y libro flotante
+            drawBox(x, y, z, x + 1, y + 0.75f, z + 1, 0x24182E, lp);
+            drawBox(x + 0.04f, y + 0.75f, z + 0.04f, x + 0.96f, y + 0.8f, z + 0.96f, 0x9B1C31, lp);
+            drawBox(cx - 0.45f, y + 0.8f, cz - 0.05f, cx - 0.35f, y + 0.9f, cz + 0.05f, 0x4AE8E0, 100);
+            drawBox(cx + 0.35f, y + 0.8f, cz - 0.05f, cx + 0.45f, y + 0.9f, cz + 0.05f, 0x4AE8E0, 100);
+            drawBox(cx - 0.26f, y + 1.0f, cz - 0.17f, cx + 0.26f, y + 1.06f, cz + 0.17f, 0x9B1C31, lp);
+            drawBox(cx - 0.23f, y + 1.06f, cz - 0.14f, cx + 0.23f, y + 1.1f, cz + 0.14f, 0xF0E8D0, lp);
+        } else if (b == B_FRAME || b == B_FRAME_EYE) {   // marco del portal del End: 13/16 de alto, con hueco para el ojo
+            drawBox(x, y, z, x + 1, y + 0.8125f, z + 1, 0x7A8F6A, lp);
+            drawBox(x + 0.2f, y + 0.8125f, z + 0.2f, x + 0.8f, y + 0.84f, z + 0.8f, 0x06261C, lp);
+            if (b == B_FRAME_EYE) drawBox(cx - 0.2f, y + 0.84f, cz - 0.2f, cx + 0.2f, y + 0.98f, cz + 0.2f, 0x35E0B0, 100);
+        } else if (b == B_EGG) {   // huevo de dragon: capas apiladas
+            drawBox(cx - 0.22f, y, cz - 0.22f, cx + 0.22f, y + 0.14f, cz + 0.22f, 0x14101C, lp);
+            drawBox(cx - 0.36f, y + 0.14f, cz - 0.36f, cx + 0.36f, y + 0.42f, cz + 0.36f, 0x14101C, lp);
+            drawBox(cx - 0.3f, y + 0.42f, cz - 0.3f, cx + 0.3f, y + 0.68f, cz + 0.3f, 0x1B1426, lp);
+            drawBox(cx - 0.2f, y + 0.68f, cz - 0.2f, cx + 0.2f, y + 0.86f, cz + 0.2f, 0x14101C, lp);
+            drawBox(cx - 0.1f, y + 0.86f, cz - 0.1f, cx + 0.1f, y + 0.94f, cz + 0.1f, 0x8A3AD0, 100);
+            drawBox(cx - 0.3f, y + 0.2f, cz + 0.2f, cx - 0.2f, y + 0.3f, cz + 0.38f, 0x8A3AD0, 100);
         } else if (b == B_KELP) {
             float o = (((x * 3 + z * 5 + y) & 3) - 1.5f) * 0.05f;
             drawBox(cx - 0.07f + o, y, cz - 0.07f - o, cx + 0.07f + o, y + 1f, cz + 0.07f - o, 0x2F8A3A, lp);
@@ -5947,7 +6151,8 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     }
 
     void drawBlock(int x, int y, int z, int b) {
-        if (b == B_CANE || b == B_CAKE || b == B_SAPLING || b == B_TORCH || (b >= B_CROP0 && b <= B_CROP2) || b == B_KELP || b == B_SEAGRASS) { drawSmall(x, y, z, b); return; }
+        if (b == B_CANE || b == B_CAKE || b == B_SAPLING || b == B_TORCH || (b >= B_CROP0 && b <= B_CROP2) || b == B_KELP || b == B_SEAGRASS
+                || b == B_ENCH || b == B_FRAME || b == B_FRAME_EYE || b == B_EGG) { drawSmall(x, y, z, b); return; }
         if (isDoor(b)) { drawDoor(x, y, z, b); return; }
         if (b == B_BED) { drawBed(x, y, z); return; }
         if (b == B_ENDPORTAL) { drawBox(x, y + 0.7f, z, x + 1, y + 0.85f, z + 1, (((tick / 8) + x + z) & 1) == 0 ? 0x0B3C50 : 0x145070, 100); return; }
@@ -5969,6 +6174,81 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         int col = (((tick / 8) + x + y + z) & 1) == 0 ? 0x8A2BE2 : 0x6A1BC2;
         if (alongX) drawBox(x, y, z + 0.4f, x + 1, y + 1, z + 0.6f, col, 100);
         else drawBox(x + 0.4f, y, z, x + 0.6f, y + 1, z + 1, col, 100);
+    }
+
+    // punto en el espacio de la camara: a = adelante, b = derecha, c = arriba
+    void camPt(float a, float b, float c, float[] o) {
+        float ux = -sinY * sinP, uy = cosP, uz = -cosY * sinP;
+        o[0] = camX + fx * a + cosY * b + ux * c;
+        o[1] = camY + fy * a + uy * c;
+        o[2] = camZ + fz * a - sinY * b + uz * c;
+    }
+
+    // tira fina que mira a la camara entre dos puntos del mundo
+    void thick(float ax, float ay, float az, float bx, float by, float bz, float w, int col) {
+        float rx = cosY * w, rz = -sinY * w;
+        toCam(ax + rx, ay, az + rz, quad, 0);
+        toCam(ax - rx, ay, az - rz, quad, 3);
+        toCam(bx - rx, by, bz - rz, quad, 6);
+        toCam(bx + rx, by, bz + rz, quad, 9);
+        fillPoly(quad, 4, col);
+    }
+
+    float[] pA = new float[3], pB = new float[3];
+
+    // cana en la mano + sedal + anzuelo (flotador) en el agua
+    void drawRodAndLine() {
+        if (slId[sel] != I_ROD) return;
+        camPt(0.45f, 0.36f, -0.40f, pA);   // base de la cana
+        camPt(1.05f, 0.24f, 0.02f, pB);    // punta de la cana
+        thick(pA[0], pA[1], pA[2], pB[0], pB[1], pB[2], 0.018f, 0x6B4A2A);
+        if (fishState == 0) return;
+        int cy = fishY, n = 0;
+        while (n < 20 && wtr(blockAt(fishX, cy + 1, fishZ))) { cy++; n++; }
+        float bx = fishX + 0.5f, bz = fishZ + 0.5f, by = cy + 0.88f;
+        if (fishState == 3) by -= 0.07f + 0.05f * (float) Math.sin(tick * 0.9f);   // pica: se hunde y tiembla
+        else by += 0.02f * (float) Math.sin(tick * 0.2f);
+        float sag = fishState == 3 ? 0.08f : 0.35f;   // sedal flojo mientras espera, tenso al picar
+        float px0 = pB[0], py0 = pB[1], pz0 = pB[2];
+        for (int i = 1; i <= 8; i++) {
+            float t = i / 8f, t0 = (i - 1) / 8f;
+            float x1 = pB[0] + (bx - pB[0]) * t, z1 = pB[2] + (bz - pB[2]) * t;
+            float y1 = pB[1] + (by - pB[1]) * t - 4f * t * (1f - t) * sag;
+            thick(px0, py0, pz0, x1, y1, z1, 0.006f, 0xE8E8E8);
+            px0 = x1; py0 = y1; pz0 = z1;
+        }
+        drawBox(bx - 0.07f, by - 0.02f, bz - 0.07f, bx + 0.07f, by + 0.06f, bz + 0.07f, 0xF0F0F0, 100);
+        drawBox(bx - 0.07f, by + 0.06f, bz - 0.07f, bx + 0.07f, by + 0.14f, bz + 0.07f, 0xD02020, 100);
+    }
+
+    // barra vertical del minijuego (izquierda): zona verde = punto tuyo, roja = punto del pez
+    void paintFishGame() {
+        if (fishState != 3) return;
+        int lh = font.getHeight();
+        int bw = 14, bh = Math.max(60, sh * 50 / 100), bx = 8, by = (sh - bh) / 2;
+        gg.setColor(0x000000);
+        gg.fillRect(bx - 2, by - 2, bw + 4, bh + 4);
+        gg.setColor(0xB02828);
+        gg.fillRect(bx, by, bw, bh);
+        int z0 = by + (int) ((fgC - fgS / 2f) * bh), z1 = by + (int) ((fgC + fgS / 2f) * bh);
+        gg.setColor(0x30C030);
+        gg.fillRect(bx, z0, bw, Math.max(2, z1 - z0));
+        int my = by + (int) (fgM * (bh - 1));
+        gg.setColor(0x000000);
+        gg.fillRect(bx - 5, my - 2, bw + 10, 5);
+        gg.setColor(fgFlash > 0 ? (fgOk ? 0xFFFFFF : 0xFF6060) : 0xFFE040);
+        gg.fillRect(bx - 4, my - 1, bw + 8, 3);
+        txt(cat(cat(L("Tu"), ": "), Integer.toString(fgYou)), bx - 4, by - lh - 4, 0x80FF80, Graphics.TOP | Graphics.LEFT);
+        txt(cat(cat(L("Pez"), ": "), Integer.toString(fgFish)), bx - 4, by + bh + 5, 0xFF8080, Graphics.TOP | Graphics.LEFT);
+    }
+
+    // el item elegido, en grande en la mano (la cana se dibuja en 3D)
+    void paintHeld(int hy) {
+        int id = slId[sel];
+        if (id == 0 || id == I_ROD) return;
+        int bs = Math.min(sw / 4, 56);
+        int bob = (int) (Math.sin(tick * 0.15f) * 1.5f);
+        drawIcon(id, 0, sw - bs - 4, hy - bs - 12 + bob, bs);
     }
 
     void drawBed(int x, int y, int z) {
@@ -6087,7 +6367,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (!opqOk) {
             for (int i = 0; i < 256; i++) {
                 opq[i] = opaque(i);
-                spc[i] = (i == B_CANE || i == B_CAKE || i == B_SAPLING || i == B_TORCH || (i >= B_CROP0 && i <= B_CROP2) || i == B_KELP || i == B_SEAGRASS || isDoor(i) || i == B_BED || i == B_PORTAL || i == B_ENDPORTAL);
+                spc[i] = (i == B_CANE || i == B_CAKE || i == B_SAPLING || i == B_TORCH || (i >= B_CROP0 && i <= B_CROP2) || i == B_KELP || i == B_SEAGRASS || isDoor(i) || i == B_BED || i == B_PORTAL || i == B_ENDPORTAL || i == B_ENCH || i == B_FRAME || i == B_FRAME_EYE || i == B_EGG);
             }
             opqOk = true;
         }
@@ -6180,6 +6460,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         }
 
         while (mp < nm) { drawMob((Mob) mobs.elementAt(mobOrd[mp])); mp++; }
+        drawRodAndLine();
         long dt = System.currentTimeMillis() - t0;
         if (dt > 110) { cullK *= 0.94f; if (cullK < 0.3f) cullK = 0.3f; }
         else if (dt < 70 && cullK < 1f) { cullK *= 1.03f; if (cullK > 1f) cullK = 1f; }
@@ -6198,6 +6479,12 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     // ---------------------------------------------------------------- dibujo 2D
     void txt(String s, int x, int y, int c, int anchor) {
         s = L(s);
+        if ((anchor & Graphics.HCENTER) != 0) {
+            // centrado a mano: sin espacios de los bordes (ej. "Nombre: " sin nombre) y contando la sombra de 1 px
+            s = s.trim();
+            x -= (gg.getFont().stringWidth(s) + 1) / 2;
+            anchor = (anchor & ~Graphics.HCENTER) | Graphics.LEFT;
+        }
         gg.setColor(0x000000);
         gg.drawString(s, x + 1, y + 1, anchor);
         gg.setColor(c);
@@ -6270,7 +6557,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         gg.drawLine(cx - 5, cy, cx + 5, cy);
         gg.drawLine(cx, cy - 5, cx, cy + 5);
 
-        if (mineProg > 0 && mineX >= 0) {
+        if (mineProg > 0 && mineX != NONE) {
             int need = breakTicks(blockAt(mineX, mineY, mineZ), slId[sel]);
             int bw = 24 * mineProg / need;
             gg.setColor(0x000000);
@@ -6279,7 +6566,9 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             gg.fillRect(cx - 12, cy + 11, bw, 3);
         }
 
+        paintFishGame();
         int hs = touch ? Math.min(sw / 11, 24) : Math.min(sw / 10, 24);
+        paintHeld(sh - hs - 3);
         int hx = touch ? (sw - 10 * hs) / 2 : (sw - 9 * hs) / 2;
         int hy = sh - hs - 3;
         for (int i = 0; i < 9; i++) {
@@ -6419,7 +6708,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             int ddx = x - tcLX, ddy = y - tcLY;
             if (ddx * ddx + ddy * ddy < 100) return;
             tcLook = true;
-            mineOn = false; starTicks = 0; starConsumed = false; mineProg = 0; mineX = -1;
+            mineOn = false; starTicks = 0; starConsumed = false; mineProg = 0; mineX = NONE;
         }
         yaw += (x - tcLX) * 0.012f;
         pitch -= (y - tcLY) * 0.012f;
@@ -6430,7 +6719,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
 
     void tcCancel() {
         tFw = false; tBk = false; tL = false; tR = false; tJp = false;
-        if (tcMode == 3) { mineOn = false; starTicks = 0; starConsumed = false; mineProg = 0; mineX = -1; }
+        if (tcMode == 3) { mineOn = false; starTicks = 0; starConsumed = false; mineProg = 0; mineX = NONE; }
         tcMode = 0;
     }
 
@@ -6439,7 +6728,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         else if (tcMode == 2) tJp = false;
         else if (tcMode == 3) {
             if (!tcLook && !starConsumed && starTicks > 0 && starTicks <= 8) doTap();
-            mineOn = false; starTicks = 0; starConsumed = false; mineProg = 0; mineX = -1;
+            mineOn = false; starTicks = 0; starConsumed = false; mineProg = 0; mineX = NONE;
         }
         tcMode = 0;
     }
@@ -6701,10 +6990,12 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     void title(String s, int y, Font f, int col, int shadow) {
         s = L(s);
         gg.setFont(f);
+        s = s.trim();
+        int tx = (sw - f.stringWidth(s) - 2) / 2;   // centrado contando la sombra de 2 px
         gg.setColor(shadow);
-        gg.drawString(s, sw / 2 + 2, y + 2, Graphics.TOP | Graphics.HCENTER);
+        gg.drawString(s, tx + 2, y + 2, Graphics.TOP | Graphics.LEFT);
         gg.setColor(col);
-        gg.drawString(s, sw / 2, y, Graphics.TOP | Graphics.HCENTER);
+        gg.drawString(s, tx, y, Graphics.TOP | Graphics.LEFT);
         gg.setFont(font);
     }
 
@@ -6846,46 +7137,94 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         if (storeBroken) txt("No se pudo guardar!", sw / 2, y + btnH + 4, 0xFF5555, Graphics.TOP | Graphics.HCENTER);
     }
 
+    // esquema del teclado: cada celda muestra la tecla y su accion; 5 / toque abre el selector de accion
     void paintKeys() {
         metrics();
         drawDirt(55);
-        int y = 3;
-        title("Controles", y, fontMid, 0xFFFFFF, 0x202020);
-        y += fontMid.getHeight() + 4;
+        layoutKeys();
+        title("Controles", 3, fontMid, 0xFFFFFF, 0x202020);
         int lh = font.getHeight();
-        int rowH = Math.max(lh + 6, 16);
-        boolean dup = false;
-        for (int i = 0; i < NACT; i++) if (isDup(i)) dup = true;
-        int bottom = sh - lh - 4;
-        wVis = (bottom - y) / (rowH + 2);
-        if (wVis < 1) wVis = 1;
-        if (wVis > NACT + 2) wVis = NACT + 2;
-        if (wScroll > navN - wVis) wScroll = Math.max(0, navN - wVis);
-        if (wScroll < 0) wScroll = 0;
-        for (int r = 0; r < wVis && wScroll + r < navN; r++) {
-            int id = navIds[wScroll + r];
-            String label;
-            if (id >= A_KEY0 && id < A_KEY0 + NACT) {
-                int a = id - A_KEY0;
-                String right = (listenAct == a) ? new StringBuffer(L("Pulsa una tecla")).append(" ").append((listenT + 19) / 20).append("s").toString() : keyName(bind[a]);
-                label = new StringBuffer(L(ACT_NAME[a])).append(": ").append(right).toString();
-                btnBad = listenAct != a && isDup(a);
+        for (int c = 0; c < 16; c++) {
+            if (kbW[c] <= 0) continue;
+            boolean on = (ksel == c);
+            if (c < NKEY) {
+                drawBtn(kbX[c], kbY[c], kbW[c], kbH[c], "", on);
+                int a = km[c];
+                String an = (a >= 0) ? fit(L(ACT_NAME[a]), kbW[c] - 6) : "-";
+                int cx0 = kbX[c] + kbW[c] / 2;
+                if (kbH[c] >= lh * 2 + 4) {
+                    int ty0 = kbY[c] + (kbH[c] - lh * 2) / 2;
+                    txt(keyShort(c), cx0, ty0, on ? 0xFFFFA0 : 0xFFFFFF, Graphics.TOP | Graphics.HCENTER);
+                    txt(an, cx0, ty0 + lh, a >= 0 ? 0xDDDDDD : 0x909090, Graphics.TOP | Graphics.HCENTER);
+                } else {
+                    txt(fit(cat(cat(keyShort(c), " "), an), kbW[c] - 6), cx0, kbY[c] + (kbH[c] - lh) / 2,
+                            on ? 0xFFFFA0 : 0xFFFFFF, Graphics.TOP | Graphics.HCENTER);
+                }
             } else {
-                label = L(id == A_KRESET ? "Restaurar" : "Atras");
-                btnBad = false;
+                drawBtn(kbX[c], kbY[c], kbW[c], kbH[c], c == 14 ? "Restaurar" : "Atras", on);
             }
-            btn(id, label, btnX, y, btnW, rowH);
-            btnBad = false;
-            y += rowH + 2;
+            if (!kpick) addHit(kbX[c], kbY[c], kbW[c], kbH[c], c < NKEY ? A_KEY0 + c : (c == 14 ? A_KRESET : A_KBACK));
         }
-        if (dup) txt(L("Tecla repetida!"), sw / 2, sh - 2, 0xFF5555, Graphics.BOTTOM | Graphics.HCENTER);
-        else txt(L("5: elegir y pulsa una tecla"), sw / 2, sh - 2, 0xB0B0B0, Graphics.BOTTOM | Graphics.HCENTER);
+        if (ksel < NKEY) {
+            int a = km[ksel];
+            String sel2 = cat(cat(L("Tecla: "), keyShort(ksel)), cat(" = ", a >= 0 ? L(ACT_NAME[a]) : L("Sin accion")));
+            txt(fit(sel2, sw - 6), sw / 2, sh - lh * 2 - 3, 0xFFFFFF, Graphics.TOP | Graphics.HCENTER);
+        }
+        int fu = firstUnbound();
+        if (fu >= 0) txt(fit(cat(L("Sin tecla: "), L(ACT_NAME[fu])), sw - 6), sw / 2, sh - 2, 0xFF5555, Graphics.BOTTOM | Graphics.HCENTER);
+        else txt(kpick ? "2/8: elegir / 5: asignar" : "Flechas: tecla / 5: cambiar", sw / 2, sh - 2, 0xB0B0B0, Graphics.BOTTOM | Graphics.HCENTER);
+        if (kpick) paintKeyPick();
+    }
+
+    // selector de accion para la tecla elegida (lista con scroll; la ultima fila quita la accion)
+    void paintKeyPick() {
+        int lh = font.getHeight();
+        int rows = NACT + 1;
+        int rowH = Math.max(lh + 6, 16);
+        pkRow = rowH;
+        int w = Math.min(sw - 8, 200), x = (sw - w) / 2;
+        int head = lh + 8;
+        int vis = (sh - 8 - head) / (rowH + 1);
+        if (vis > rows) vis = rows;
+        if (vis < 1) vis = 1;
+        wVis = vis;
+        int h = head + vis * (rowH + 1) + 3;
+        int y = (sh - h) / 2;
+        if (kpFollow) {
+            kpFollow = false;
+            if (kpSel < wScroll) wScroll = kpSel;
+            if (kpSel >= wScroll + vis) wScroll = kpSel - vis + 1;
+        }
+        int maxS = rows - vis;
+        if (wScroll > maxS) wScroll = maxS;
+        if (wScroll < 0) wScroll = 0;
+        gg.setColor(0x000000);
+        gg.fillRect(x - 2, y - 2, w + 4, h + 4);
+        gg.setColor(0x303030);
+        gg.fillRect(x, y, w, h);
+        gg.setColor(0x909090);
+        gg.drawRect(x, y, w - 1, h - 1);
+        txt(cat(L("Tecla: "), keyShort(ksel)), sw / 2, y + 4, 0xFFFF80, Graphics.TOP | Graphics.HCENTER);
+        int cur = km[ksel];
+        for (int r = 0; r < vis; r++) {
+            int i = wScroll + r;
+            if (i >= rows) break;
+            int yy = y + head + r * (rowH + 1);
+            String lab = (i < NACT) ? L(ACT_NAME[i]) : L("Sin accion");
+            boolean isCur = (i < NACT) ? cur == i : cur < 0;
+            if (isCur) lab = cat("* ", lab);
+            drawBtn(x + 3, yy, w - 6, rowH, lab, i == kpSel);
+            addHit(x + 3, yy, w - 6, rowH, A_PICK0 + i);
+        }
+        addHit(x, y, w, h, 0);   // tocar el panel no hace nada; tocar fuera lo cierra
+        if (wScroll > 0) txt("^", x + 6, y + 4, 0xFFFFFF, Graphics.TOP | Graphics.LEFT);
+        if (wScroll + vis < rows) txt("v", x + w - 6, y + 4, 0xFFFFFF, Graphics.TOP | Graphics.RIGHT);
     }
 
     void paintSettings() {
         if (inWorld) { paintWorld(); dim(); } else drawDirt(55);
         metrics();
-        int rows = inWorld ? 3 : 2;
+        int rows = inWorld ? 4 : 3;
         int total = fontMid.getHeight() + 14 + rows * (btnH + 8) + font.getHeight() + (inWorld ? font.getHeight() : 0) + 8 + btnH;
         int y = (sh - total) / 2;
         if (y < 2) y = 2;
@@ -6895,6 +7234,8 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             btn(A_RD, new StringBuffer(L("Render: ")).append(L(RD_NAME[rdIdx])).append(" (").append(RD_OPT[rdIdx]).append(")").toString(), btnX, y, btnW, btnH);
             y += btnH + 8;
         }
+        btn(A_FOL, new StringBuffer(L("Follaje: ")).append(L(flatFol ? "Plano" : "3D")).toString(), btnX, y, btnW, btnH);
+        y += btnH + 8;
         btn(A_MUS, new StringBuffer(L("Musica: ")).append(musLv * 20).append('%').toString(), btnX, y, btnW, btnH);
         y += btnH + 8;
         btn(A_SFX, new StringBuffer(L("Efectos: ")).append(sfxLv * 20).append('%').toString(), btnX, y, btnW, btnH);
