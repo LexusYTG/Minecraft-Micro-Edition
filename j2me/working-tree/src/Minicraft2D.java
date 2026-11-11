@@ -7131,10 +7131,285 @@ class Minicraft3DCanvas extends Canvas implements Runnable, CommandListener {
         addHit(x, y, w, h, id);
     }
 
+    // ---------------------------------------------------------------- panorama 3D del menu principal
+    // Un mini-mundo fijo (colinas, lago, arboles) dibujado con el mismo motor de poligonos del juego.
+    // El mundo no cambia: lo que gira lento es la camara, asi el fondo queda "congelado".
+    static final int PN = 32, PH = 14, PWL = 4;   // tamano del mini-mundo (PN x PN x PH) y nivel del agua
+    static final int PAN_DIR = 1;                 // 1: el paisaje se desplaza hacia la izquierda; -1: hacia la derecha
+    static final int PAN_MS = 110000;             // milisegundos por vuelta completa
+    static final int PAN_FOG = 0xBCD9F2;          // color de la niebla (igual al cielo en el horizonte)
+    byte[] pw;                                    // bloques: 1 pasto, 2 tierra, 3 piedra, 4 arena, 5 agua, 6 tronco, 7 hojas
+    int[] pcCell, pcStart;                        // celdas con caras visibles, agrupadas por columna (y creciente)
+    float[] pv = new float[12];
+
+    int phash(int x, int y, int z) {
+        int h = x * 73856093 ^ y * 19349663 ^ z * 83492791;
+        h = (h ^ (h >>> 13)) * 1274126177;
+        return h ^ (h >>> 16);
+    }
+
+    void pset(int x, int y, int z, int b, boolean over) {
+        if (x < 0 || x >= PN || z < 0 || z >= PN || y < 0 || y >= PH) return;
+        int i = (x * PN + z) * PH + y;
+        if (over || pw[i] == 0) pw[i] = (byte) b;
+    }
+
+    void panInit() {
+        pw = new byte[PN * PN * PH];
+        int[] hm = new int[PN * PN];
+        for (int x = 0; x < PN; x++) {
+            for (int z = 0; z < PN; z++) {
+                float f = 4.6f + 1.6f * (float) Math.sin(x * 0.33f) + 1.3f * (float) Math.sin(z * 0.27f + 1.3f)
+                        + 0.8f * (float) Math.sin((x + z) * 0.51f) + 0.6f * (float) Math.sin((x - z) * 0.77f + 0.5f);
+                int h = (int) (f + 0.5f);
+                if (h < 2) h = 2;
+                if (h > 8) h = 8;
+                hm[x * PN + z] = h;
+            }
+        }
+        for (int x = 0; x < PN; x++) {
+            for (int z = 0; z < PN; z++) {
+                int h = hm[x * PN + z];
+                boolean sand = h <= PWL;
+                for (int y = 0; y <= h; y++) {
+                    int b = (y == h) ? (sand ? 4 : 1) : ((y >= h - 2) ? (sand ? 4 : 2) : 3);
+                    pset(x, y, z, b, true);
+                }
+                for (int y = h + 1; y <= PWL; y++) pset(x, y, z, 5, true);
+            }
+        }
+        for (int x = 3; x < PN - 3; x++) {
+            for (int z = 3; z < PN - 3; z++) {
+                int h = hm[x * PN + z];
+                if (h < 5 || h > 7) continue;
+                if (((phash(x, 7, z) >>> 6) % 23) != 0) continue;
+                for (int dx = -2; dx <= 2; dx++) {
+                    for (int dz = -2; dz <= 2; dz++) {
+                        int ax = dx < 0 ? -dx : dx, az = dz < 0 ? -dz : dz;
+                        if (ax == 2 && az == 2) continue;
+                        pset(x + dx, h + 3, z + dz, 7, false);
+                        if (ax <= 1 && az <= 1 && (ax + az) < 2) pset(x + dx, h + 4, z + dz, 7, false);
+                    }
+                }
+                pset(x, h + 1, z, 6, true);
+                pset(x, h + 2, z, 6, true);
+                pset(x, h + 3, z, 6, true);
+            }
+        }
+        int[] tmp = new int[PN * PN * PH];
+        pcStart = new int[PN * PN + 1];
+        int n = 0;
+        for (int x = 0; x < PN; x++) {
+            for (int z = 0; z < PN; z++) {
+                int ci = x * PN + z, base = ci * PH;
+                pcStart[ci] = n;
+                for (int y = 0; y < PH; y++) {
+                    int b = pw[base + y];
+                    if (b == 0) continue;
+                    int m = 0;
+                    if (y == PH - 1 || pw[base + y + 1] == 0) m |= 1;
+                    if (x == PN - 1 || pw[base + PN * PH + y] == 0) m |= 2;
+                    if (x == 0 || pw[base - PN * PH + y] == 0) m |= 4;
+                    if (z == PN - 1 || pw[base + PH + y] == 0) m |= 8;
+                    if (z == 0 || pw[base - PH + y] == 0) m |= 16;
+                    if (m != 0) tmp[n++] = y | (b << 8) | (m << 16);
+                }
+            }
+        }
+        pcStart[PN * PN] = n;
+        pcCell = new int[n];
+        System.arraycopy(tmp, 0, pcCell, 0, n);
+    }
+
+    void pq(int i, float x, float y, float z) {
+        toCam(x, y, z, pv, i * 3);
+    }
+
+    // cara lateral (dir 2: +x, 4: -x, 8: +z, 16: -z) entre las alturas ya y yb
+    void pSide(int dir, int x, int z, float ya, float yb, int col) {
+        float x0 = x, x1 = x + 1, z0 = z, z1 = z + 1;
+        if (dir == 2 || dir == 4) {
+            float xs = (dir == 2) ? x1 : x0;
+            pq(0, xs, ya, z0); pq(1, xs, yb, z0); pq(2, xs, yb, z1); pq(3, xs, ya, z1);
+        } else {
+            float zs = (dir == 8) ? z1 : z0;
+            pq(0, x0, ya, zs); pq(1, x1, ya, zs); pq(2, x1, yb, zs); pq(3, x0, yb, zs);
+        }
+        fillPoly(pv, 4, col);
+    }
+
+    int pcol(int base, int pct, int hv, int fp) {
+        return mix(PAN_FOG, shade(base, pct * hv / 100), fp);
+    }
+
+    void pDrawCell(int x, int y, int z, int b, int m, int fp) {
+        int topC, sideC;
+        switch (b) {
+            case 1: topC = 0x5FA03A; sideC = 0x7B5B34; break;
+            case 2: topC = 0x7B5B34; sideC = 0x7B5B34; break;
+            case 3: topC = 0x7D7D7D; sideC = 0x7D7D7D; break;
+            case 4: topC = 0xDBD3A0; sideC = 0xDBD3A0; break;
+            case 5: topC = 0x3A70DA; sideC = 0x2E5FC0; break;
+            case 6: topC = 0x9C7B4A; sideC = 0x6B5230; break;
+            default: topC = 0x3F8A2B; sideC = 0x3F8A2B; break;
+        }
+        int hv = 93 + ((phash(x, y, z) >>> 9) & 7);
+        float y0 = y, y1 = y + 1;
+        if ((m & 1) != 0) {
+            pq(0, x, y1, z); pq(1, x + 1, y1, z); pq(2, x + 1, y1, z + 1); pq(3, x, y1, z + 1);
+            fillPoly(pv, 4, pcol(topC, 100, hv, fp));
+        }
+        for (int d = 2; d <= 16; d <<= 1) {
+            if ((m & d) == 0) continue;
+            int pct = (d <= 4) ? 62 : 80;
+            pSide(d, x, z, y0, y1, pcol(sideC, pct, hv, fp));
+            if (b == 1 && fp < 70) pSide(d, x, z, y1 - 0.25f, y1, pcol(topC, pct, hv, fp));   // franja de pasto en el borde
+        }
+    }
+
+    void paintPanorama() {
+        if (pw == null) panInit();
+        // cielo: degradado que termina en el color de la niebla
+        int bands = 12;
+        for (int i = 0; i < bands; i++) {
+            gg.setColor(mix(PAN_FOG, 0x6FA6E6, Math.min(100, i * 100 / 7)));
+            gg.fillRect(0, sh * i / bands, sw, sh * (i + 1) / bands - sh * i / bands);
+        }
+        long now = System.currentTimeMillis();
+        float yaw0 = PAN_DIR * (float) (((now % PAN_MS) * 6.2831853) / PAN_MS);
+        float pit = -0.2f;
+        camX = PN * 0.5f; camY = 12.5f; camZ = PN * 0.5f;
+        cosY = (float) Math.cos(yaw0); sinY = (float) Math.sin(yaw0);
+        cosP = (float) Math.cos(pit); sinP = (float) Math.sin(pit);
+        halfW = sw / 2f; halfH = sh / 2f;
+        focal = halfW / (float) Math.tan(FOV / 2f);
+        float tanH = halfW / focal;
+        int cxi = PN / 2;
+        for (int a = 0; a < PN; a++) {
+            int x = (a < cxi) ? a : PN - 1 - (a - cxi);
+            for (int c = 0; c < PN; c++) {
+                int z = (c < cxi) ? c : PN - 1 - (c - cxi);
+                float cdx = x + 0.5f - camX, cdz = z + 0.5f - camZ;
+                float d2 = cdx * cdx + cdz * cdz;
+                if (d2 > 225f) continue;
+                float rx = cdx * cosY - cdz * sinY, rz = cdx * sinY + cdz * cosY;
+                if (rz < -1.5f) continue;
+                float arx = (rx < 0f) ? -rx : rx;
+                if (arx - 1.5f > (rz + 1.5f) * tanH) continue;
+                int fp = (int) (((float) Math.sqrt(d2) - 4f) * 100f / 11f);
+                if (fp < 0) fp = 0;
+                if (fp > 100) fp = 100;
+                int vis = 1;
+                if (camX > x + 1) vis |= 2; else if (camX < x) vis |= 4;
+                if (camZ > z + 1) vis |= 8; else if (camZ < z) vis |= 16;
+                int ci = x * PN + z;
+                for (int k = pcStart[ci]; k < pcStart[ci + 1]; k++) {
+                    int cell = pcCell[k];
+                    int m = (cell >> 16) & vis;
+                    if (m != 0) pDrawCell(x, cell & 255, z, (cell >> 8) & 255, m, fp);
+                }
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- titulo en pixel art
+    String[] glyph(char c) {
+        switch (c) {
+            case 'M': return new String[] { "X...X", "XX.XX", "X.X.X", "X...X", "X...X", "X...X", "X...X" };
+            case 'I': return new String[] { "XXX", ".X.", ".X.", ".X.", ".X.", ".X.", "XXX" };
+            case 'N': return new String[] { "X...X", "XX..X", "X.X.X", "X..XX", "X...X", "X...X", "X...X" };
+            case 'C': return new String[] { ".XXXX", "X....", "X....", "X....", "X....", "X....", ".XXXX" };
+            case 'R': return new String[] { "XXXX.", "X...X", "X...X", "XXXX.", "X.X..", "X..X.", "X...X" };
+            case 'A': return new String[] { ".XXX.", "X...X", "X...X", "XXXXX", "X...X", "X...X", "X...X" };
+            case 'F': return new String[] { "XXXXX", "X....", "X....", "XXXX.", "X....", "X....", "X...." };
+            default:  return new String[] { "XXXXX", "..X..", "..X..", "..X..", "..X..", "..X..", "..X.." };   // T
+        }
+    }
+
+    boolean[] pxg;   // grilla del titulo
+    int pxCols;
+
+    boolean pxOn(int r, int c) {
+        return r >= 0 && r < 7 && c >= 0 && c < pxCols && pxg[r * pxCols + c];
+    }
+
+    // dibuja el texto como bloques de piedra con borde negro y sombra; devuelve la y de abajo
+    int drawPixTitle(String s, int y) {
+        int cols = 0;
+        for (int i = 0; i < s.length(); i++) cols += glyph(s.charAt(i))[0].length() + (i > 0 ? 1 : 0);
+        pxCols = cols;
+        pxg = new boolean[7 * cols];
+        int cx = 0;
+        for (int i = 0; i < s.length(); i++) {
+            String[] g = glyph(s.charAt(i));
+            for (int r = 0; r < 7; r++) {
+                for (int c = 0; c < g[r].length(); c++) pxg[r * cols + cx + c] = g[r].charAt(c) == 'X';
+            }
+            cx += g[0].length() + 1;
+        }
+        int cell = (sw - 16) / (cols + 2);
+        if (cell > 8) cell = 8;
+        if (cell < 2) cell = 2;
+        int x0 = (sw - cols * cell) / 2;
+        int e = Math.max(1, cell / 2), sd = Math.max(2, cell / 2), t = Math.max(1, cell / 4);
+        for (int pass = 0; pass < 2; pass++) {   // 0: sombra, 1: borde negro
+            gg.setColor(pass == 0 ? 0x1C1C1C : 0x000000);
+            int off = (pass == 0) ? sd : 0;
+            for (int r = 0; r < 7; r++) {
+                for (int c = 0; c < cols; c++) {
+                    if (pxg[r * cols + c]) gg.fillRect(x0 + c * cell - e + off, y + r * cell - e + off, cell + 2 * e, cell + 2 * e);
+                }
+            }
+        }
+        for (int r = 0; r < 7; r++) {
+            for (int c = 0; c < cols; c++) {
+                if (!pxg[r * cols + c]) continue;
+                int px = x0 + c * cell, py = y + r * cell;
+                int h = phash(c, r, 5);
+                int k = (h >>> 8) & 3;
+                gg.setColor(k == 0 ? 0xA0A0A0 : (k == 1 ? 0xAEAEAE : (k == 2 ? 0xB8B8B8 : 0xA8A8A8)));
+                gg.fillRect(px, py, cell, cell);
+                if (((h >>> 12) & 3) == 0 && cell >= 4) {   // motas oscuras como la piedra
+                    gg.setColor(0x7E7E7E);
+                    gg.fillRect(px + cell / 3, py + cell / 3, Math.max(1, cell / 3), Math.max(1, cell / 3));
+                }
+                if (!pxOn(r - 1, c)) { gg.setColor(0xE4E4E4); gg.fillRect(px, py, cell, t); }
+                if (!pxOn(r, c - 1)) { gg.setColor(0xD2D2D2); gg.fillRect(px, py, t, cell); }
+                if (!pxOn(r + 1, c)) { gg.setColor(0x686868); gg.fillRect(px, py + cell - t, cell, t); }
+                if (!pxOn(r, c + 1)) { gg.setColor(0x787878); gg.fillRect(px + cell - t, py, t, cell); }
+            }
+        }
+        return y + 7 * cell + sd;
+    }
+
+    void outlined(String s, int y, Font f, int col, int shadow) {
+        s = L(s).trim();
+        gg.setFont(f);
+        int tx = (sw - f.stringWidth(s)) / 2;
+        gg.setColor(0x000000);
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                if (dx != 0 || dy != 0) gg.drawString(s, tx + dx + 1, y + dy + 1, Graphics.TOP | Graphics.LEFT);
+            }
+        }
+        gg.setColor(shadow);
+        gg.drawString(s, tx + 2, y + 2, Graphics.TOP | Graphics.LEFT);
+        gg.setColor(col);
+        gg.drawString(s, tx, y, Graphics.TOP | Graphics.LEFT);
+        gg.setFont(font);
+    }
+
+    int drawLogoPx(int y) {
+        y = drawPixTitle("MINICRAFT", y);
+        y += 4;
+        outlined("MICRO EDITION", y, fontMid, 0xFFE24A, 0x7A5A00);
+        return y + fontMid.getHeight();
+    }
+
     void paintMenu() {
         metrics();
-        drawDirt(55);
-        int y = drawLogo(Math.max(6, sh / 14));
+        paintPanorama();
+        int y = drawLogoPx(Math.max(6, sh / 14));
         y += Math.max(10, sh / 12);
         btn(A_PLAY, "Jugar", btnX, y, btnW, btnH);
         y += btnH + 8;
@@ -7143,7 +7418,7 @@ class Minicraft3DCanvas extends Canvas implements Runnable, CommandListener {
         btn(A_SND, "Sonido", btnX, y, btnW, btnH);
         y += btnH + 8;
         btn(A_QUIT, "Salir", btnX, y, btnW, btnH);
-        txt("En juego: L o R = pausa", sw / 2, sh - 3, 0xB0B0B0, Graphics.BOTTOM | Graphics.HCENTER);
+        txt("En juego: L o R = pausa", sw / 2, sh - 3, 0xE0E0E0, Graphics.BOTTOM | Graphics.HCENTER);
     }
 
     void paintWorlds() {

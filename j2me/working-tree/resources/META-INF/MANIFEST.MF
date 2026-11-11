@@ -1,6 +1,6 @@
 Manifest-Version: 1.3
 MIDlet-Name: Minicraft Micro Edition
-MIDlet-Version: 1.3.0
+MIDlet-Version: 1.0.0-F
 MIDlet-Vendor: LexusYTG
 MIDlet-1: Minicraft Micro Edition,,Minicraft2D
 MicroEdition-Configuration: CLDC-1.1
