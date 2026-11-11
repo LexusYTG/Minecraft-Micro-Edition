@@ -1,8 +1,8 @@
 # Minicraft Micro Edition
 
-**Minecraft Micro Edition** es un clon del juego Minicraft pensado para consumir muy pocos recursos y ejecutarse en hardware poco potente, buscando democratizar la experiencia Minicraft.
+**Minicraft Micro Edition** es un clon del juego Minicraft pensado para consumir muy pocos recursos y ejecutarse en hardware poco potente, buscando democratizar la experiencia Minicraft.
 
-Es un solo juego para todas las plataformas posibles. **No es** Minecraft Java Edition ni Minecraft Bedrock Edition; es Minicraft Micro Edition.
+Es un solo juego para todas las plataformas posibles. **No es** Minicraft Java Edition ni Minicraft Bedrock Edition; es Minicraft Micro Edition.
 
 ---
 

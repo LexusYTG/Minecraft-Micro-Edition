@@ -2,7 +2,7 @@ lang[0]=Espanol
 lang[1]=English
 
 # ============================================================
-#  IDIOMAS DE MINECRAFT2D   (archivo unico, UTF-8)
+#  IDIOMAS DE MINICRAFT2D   (archivo unico, UTF-8)
 # ============================================================
 # Arriba va la lista de idiomas:  lang[ID]=Nombre  (ID entre 0 y 127).
 # Despues, un bloque por idioma que empieza con [ID].
@@ -25,7 +25,7 @@ lang[1]=English
 #    <plataforma>/working-tree/src/leng/idiomas.txt. Si se edita uno, copiarlo a los otros tres.
 #  - Dentro del juego, PSP / N64 / MS-DOS solo tienen fuente ASCII: las letras con acento se dibujan
 #    sin acento (a, e, n...) y los caracteres que no sean latinos se ven como '?'.
-#  - Donde va el archivo: PSP = ms0:/PSP/GAME/Minecraft2D/leng/idiomas.txt (build.sh lo copia);
+#  - Donde va el archivo: PSP = ms0:/PSP/GAME/Minicraft2D/leng/idiomas.txt (build.sh lo copia);
 #    N64 = dentro de la ROM (Makefile) o, si no esta, sd:/MC64/leng/idiomas.txt;
 #    MS-DOS = leng\idiomas.txt junto a mme.exe (build.sh lo copia).
 #

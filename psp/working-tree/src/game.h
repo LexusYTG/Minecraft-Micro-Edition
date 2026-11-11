@@ -1,4 +1,4 @@
-// Port a C++ para PSP (PSPSDK) de Minecraft2D.java (J2ME).
+// Port a C++ para PSP (PSPSDK) de Minicraft2D.java (J2ME).
 // Misma logica que el original: mundo por chunks de 16x16x32, render 3D por software
 // con algoritmo del pintor, pero las caras se rasterizan con el GPU (sceGu).
 #pragma once

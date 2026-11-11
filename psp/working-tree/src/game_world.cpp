@@ -72,7 +72,7 @@ void Game::init(const char* argv0) {
     if (!rs) rs = 1;
     std::string b = argv0 ? argv0 : "";
     size_t p = b.find_last_of('/');
-    baseDir = (p == std::string::npos) ? "ms0:/PSP/GAME/Minecraft2D/" : b.substr(0, p + 1);
+    baseDir = (p == std::string::npos) ? "ms0:/PSP/GAME/Minicraft2D/" : b.substr(0, p + 1);
     saveRoot = baseDir + "saves";
     mkdirp(saveRoot);
     initTables();
@@ -1410,7 +1410,7 @@ void Game::loadChests() {
 }
 
 // ---------------------------------------------------------------- idiomas
-// Mismo sistema que la version Java (Minecraft2D.java): TODOS los idiomas viven en UN archivo,
+// Mismo sistema que la version Java (Minicraft2D.java): TODOS los idiomas viven en UN archivo,
 // leng/idiomas.txt (el formato esta explicado en el propio archivo y es el mismo en todas las
 // plataformas). Para agregar un idioma solo se edita ese archivo, no este codigo.
 //
@@ -1602,7 +1602,7 @@ static bool readWholeFile(const std::string& path, std::string& out) {
     return !out.empty();
 }
 
-// Donde esta el archivo de idiomas: junto al EBOOT.PBP -> ms0:/PSP/GAME/Minecraft2D/leng/idiomas.txt
+// Donde esta el archivo de idiomas: junto al EBOOT.PBP -> ms0:/PSP/GAME/Minicraft2D/leng/idiomas.txt
 bool Game::loadLangData(std::string& out) {
     return readWholeFile(baseDir + "leng/idiomas.txt", out);
 }

@@ -1,4 +1,4 @@
-# Controles (Minecraft J2ME)
+# Controles (Minicraft J2ME)
 
 Teclas por keyCode: NUM0-9, * y #. Joystick/cruceta se mapea a 2/4/6/8/5.
 
@@ -22,4 +22,4 @@ Teclas por keyCode: NUM0-9, * y #. Joystick/cruceta se mapea a 2/4/6/8/5.
 - Un chunk modificado se empaqueta al alejarte; al juntar 16 KB pendientes (SAVE_LIMIT) se escriben, el juego se congela y aparece "Guardando...".
 - Cada partida nueva borra el mundo anterior (todavia no hay "Continuar").
 - Salto: ~1.3 bloques, alcanza para subir de a un bloque.
-- Minecraft2D.DEBUG = true muestra RAM viva del juego, FPS, mobs, chunks (en RAM / pendientes / en disco) y posicion.
+- Minicraft2D.DEBUG = true muestra RAM viva del juego, FPS, mobs, chunks (en RAM / pendientes / en disco) y posicion.

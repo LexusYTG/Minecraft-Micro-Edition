@@ -1,4 +1,4 @@
-TARGET = Minecraft2D
+TARGET = Minicraft2D
 OBJS = main.o osk.o gfx.o game_world.o game_logic.o game_render.o
 
 CFLAGS = -O2 -G0 -Wall
@@ -10,7 +10,7 @@ LIBS = -lstdc++ -lpspgum -lpspgu -lpspdebug -lpspdisplay -lpspge -lpspctrl -lpsp
 LDFLAGS =
 
 EXTRA_TARGETS = EBOOT.PBP
-PSP_EBOOT_TITLE = Minecraft2D
+PSP_EBOOT_TITLE = Minicraft2D
 
 PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak

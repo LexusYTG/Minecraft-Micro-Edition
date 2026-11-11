@@ -1,11 +1,11 @@
-// Minecraft2D para PSP - punto de entrada y bucle principal (tick fijo de 50 ms, como el original J2ME).
+// Minicraft2D para PSP - punto de entrada y bucle principal (tick fijo de 50 ms, como el original J2ME).
 #include <pspkernel.h>
 #include <pspctrl.h>
 #include <pspdisplay.h>
 #include <psppower.h>
 #include "game.h"
 
-PSP_MODULE_INFO("Minecraft2D", PSP_MODULE_USER, 1, 0);
+PSP_MODULE_INFO("Minicraft2D", PSP_MODULE_USER, 1, 0);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
 PSP_HEAP_SIZE_KB(-1024);
 

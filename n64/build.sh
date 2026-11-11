@@ -33,7 +33,7 @@ if proot-distro login ubuntu -- bash -c "
     chmod -R 777 $FINAL_DIR $BUILD_DIR
 "; then
     echo "[2/2] Empaquetado completado."
-    echo "✅ Éxito: $FINAL_DIR/Minecraft64.z64"
+    echo "✅ Éxito: $FINAL_DIR/Minicraft64.z64"
 else
     echo "❌ ERROR: Falló la compilación de N64."
     echo "📄 --- LOG DE ERRORES ---"

@@ -1183,7 +1183,7 @@ void Game::title(const std::string& s, int y, int col, int shadow) {
     text(ls.c_str(), sw / 2, y, col, TA_TOP | TA_HCENTER);
 }
 
-// logo "MINECRAFT" con letras de 5x5 celdas dibujadas con rectangulos
+// logo "MINICRAFT" con letras de 5x5 celdas dibujadas con rectangulos
 void Game::drawLogo(int y) {
     static const char* const L[9][5] = {
         { "X...X", "XX.XX", "X.X.X", "X...X", "X...X" },   // M

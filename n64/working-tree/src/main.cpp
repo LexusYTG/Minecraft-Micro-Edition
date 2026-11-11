@@ -1,4 +1,4 @@
-// Minecraft Micro Edition para Nintendo 64 (libdragon) - punto de entrada y bucle principal
+// Minicraft Micro Edition para Nintendo 64 (libdragon) - punto de entrada y bucle principal
 // (tick fijo de 50 ms, como el original J2ME).
 #include "game.h"
 #include <joypad.h>

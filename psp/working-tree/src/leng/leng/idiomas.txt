@@ -7,7 +7,7 @@ lang[5]=Polski
 lang[6]=Português
 
 # ============================================================
-#  IDIOMAS DE MINECRAFT2D   (archivo unico, UTF-8)
+#  IDIOMAS DE MINICRAFT2D   (archivo unico, UTF-8)
 # ============================================================
 # Arriba va la lista de idiomas:  lang[ID]=Nombre  (ID entre 0 y 127).
 # Despues, un bloque por idioma que empieza con [ID].

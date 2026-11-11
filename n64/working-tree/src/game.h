@@ -1,4 +1,4 @@
-// Port a Nintendo 64 (libdragon) de Minecraft2D.java (J2ME), pasando por la version de PSP.
+// Port a Nintendo 64 (libdragon) de Minicraft2D.java (J2ME), pasando por la version de PSP.
 // Misma logica que el original: mundo por chunks de 16x16x32, render 3D por software
 // con algoritmo del pintor, pero las caras se rasterizan con el RDP (rdpq).
 #pragma once

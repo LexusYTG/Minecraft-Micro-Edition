@@ -1,4 +1,4 @@
-# Minecraft Micro Edition - port a Nintendo 64 (libdragon, rama trunk)
+# Minicraft Micro Edition - port a Nintendo 64 (libdragon, rama trunk)
 # El script de build exporta N64_INST=/opt/libdragon antes de llamar a make.
 BUILD_DIR = build
 SOURCE_DIR = .
@@ -10,20 +10,20 @@ N64_CXXFLAGS += -Wno-error
 OBJS = $(BUILD_DIR)/main.o $(BUILD_DIR)/osk.o $(BUILD_DIR)/gfx.o \
        $(BUILD_DIR)/game_world.o $(BUILD_DIR)/game_logic.o $(BUILD_DIR)/game_render.o
 
-all: Minecraft64.z64
+all: Minicraft64.z64
 
-Minecraft64.z64: N64_ROM_TITLE = "Minecraft ME"
+Minicraft64.z64: N64_ROM_TITLE = "Minicraft ME"
 
 # Sistema de idiomas: leng/idiomas.txt (el mismo archivo de la version Java) se mete en la ROM como sistema
 # de archivos DFS; el juego lo lee como "rom:/idiomas.txt" (si no estuviera, prueba sd:/MC64/leng/idiomas.txt).
-$(BUILD_DIR)/Minecraft64.dfs: leng/idiomas.txt
+$(BUILD_DIR)/Minicraft64.dfs: leng/idiomas.txt
 	@mkdir -p $(dir $@)
 	@echo "    [DFS] $@"
 	$(N64_MKDFS) $@ leng
 
-Minecraft64.z64: $(BUILD_DIR)/Minecraft64.dfs
+Minicraft64.z64: $(BUILD_DIR)/Minicraft64.dfs
 
-$(BUILD_DIR)/Minecraft64.elf: $(OBJS)
+$(BUILD_DIR)/Minicraft64.elf: $(OBJS)
 
 clean:
 	rm -rf $(BUILD_DIR) *.z64

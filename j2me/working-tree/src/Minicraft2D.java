@@ -14,13 +14,13 @@ import java.util.Hashtable;
 import java.util.Random;
 import java.util.Vector;
 
-public class Minecraft2D extends MIDlet {
+public class Minicraft2D extends MIDlet {
     // true = ventanita de depuracion (RAM, FPS, chunks, posicion) mientras se juega
 static final boolean DEBUG = false;
     static long memBase;   // memoria viva antes de crear el juego (solo DEBUG)
 
     private Display display;
-    private Minecraft3DCanvas canvas;
+    private Minicraft3DCanvas canvas;
 
     public void startApp() {
         display = Display.getDisplay(this);
@@ -29,7 +29,7 @@ static final boolean DEBUG = false;
             rt.gc();
             memBase = rt.totalMemory() - rt.freeMemory();
         }
-        if (canvas == null) canvas = new Minecraft3DCanvas(this, display);
+        if (canvas == null) canvas = new Minicraft3DCanvas(this, display);
         display.setCurrent(canvas);
         canvas.start();
     }
@@ -68,19 +68,20 @@ class WorldInfo {
     String name;
 }
 
-class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
+class Minicraft3DCanvas extends Canvas implements Runnable, CommandListener {
     // ---------------------------------------------------------------- constantes
     // mundo infinito por chunks (CS debe ser 16: se usa >> 4 y & 15)
     static final int CS = 16;            // lado del chunk en bloques
     static final int H = 64;             // altura del mundo
-    static final int NC_MAX = 3;         // ventana maxima 3x3 (distancias > 7)
+    static final int NC_MAX = 30;         // ventana maxima 3x3 (distancias > 7)
 
     static final int CHB = CS * CS * H;  // bytes por chunk en RAM
     static final int PB = CHB;
     static final int SAVE_LIMIT = 16384; // al juntar 16 KB de chunks modificados se escriben al RecordStore
     static final String LIST_STORE = "mcw_list", CFG_STORE = "mcw_cfg", OLD_STORE = "mc2dworld";
-    static final int[] RD_OPT = { 4, 7, 10, 13, 15 };   // distancia de renderizado en bloques
-    static final String[] RD_NAME = { "Minima", "Normal", "Lejos", "Muy lejos", "Extrema" };
+    static final boolean EMU = true;   // true = version para emuladores (render sin limite practico y sin tope de FPS); false = version normal
+    static final int[] RD_OPT = EMU ? new int[] { 4, 7, 10, 13, 15, 20, 25, 30, 40, 50, 64, 80, 100, 128, 160, 192, 256 } : new int[] { 4, 7, 10, 13, 15 };   // distancia de renderizado en bloques
+    static final String[] RD_NAME = EMU ? new String[] { "Minima", "Normal", "Lejos", "Muy lejos", "Extrema", "Ultra", "Ultra", "Ultra", "Ultra", "Ultra", "Ultra", "Ultra", "Ultra", "Ultra", "Ultra", "Ultra", "Ultra" } : new String[] { "Minima", "Normal", "Lejos", "Muy lejos", "Extrema" };
 
 
     static final int NONE = 0x7fffffff;  // slot de chunk vacio
@@ -186,15 +187,18 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     int sw, sh;
     float halfW, halfH, focal;
     float[] cO = new float[3], eX = new float[3], eY = new float[3], eZ = new float[3];   // origen y ejes de un bloque en camara
-    byte[][] colTop = new byte[16][];   // altura (y+1) de la capa no vacia mas alta por columna, cache por chunk
-    int[] topCx = new int[16], topCz = new int[16], topG = new int[16];
+    byte[][] colTop = new byte[2048][];   // altura (y+1) de la capa no vacia mas alta por columna, cache por chunk
+    int[] topCx = new int[2048], topCz = new int[2048], topG = new int[2048];
     int topGen = 1, topW = -1, camC;
     float cullK = 1f;                                  // distancia de dibujo adaptativa (baja sola si hay pocos FPS)
     boolean[] opq = new boolean[256];
     boolean opqOk;
     boolean[] spc = new boolean[256];      // bloques especiales (plantas, puertas...): sin mascara de caras
-    byte[][] colSol = new byte[16][];      // altura de la capa solida contigua desde el fondo, por columna
+    byte[][] colSol = new byte[2048][];      // altura de la capa solida contigua desde el fondo, por columna
     int lastSlot;
+    // version para emuladores: la logica corre a 20 ticks/s fijos, el dibujo va sin tope y la camara se interpola entre ticks
+    float emuPX, emuPY, emuPZ, emuDYaw, emuDPitch;
+    long emuTickT, emuNext;
     float cullNow;
     Mob ride;                              // barco que se esta montando
     int palPress;                          // boton tactil de pagina presionado (1 izq, 2 der)
@@ -212,7 +216,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     boolean mineOn;                  // romper/colocar mantenido (tecla o tactil)
     boolean[] kd = new boolean[14];   // 0-9, 10 = *, 11 = #, 12 = L, 13 = R
     int layout = 0;                   // 0 = A (caminar), 1 = B (camara)
-    boolean dbgOn = Minecraft2D.DEBUG;
+    boolean dbgOn = Minicraft2D.DEBUG;
     int musLv = 3, sfxLv = 5;         // volumen de musica / efectos: 0..5 (x20 = %)
     boolean wasInW;                   // estaba en el agua (para el chapoteo)
     float stepD;                      // distancia caminada desde el ultimo paso
@@ -268,7 +272,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     float cullSq = 528f;
 
     // mundos y menus
-    Minecraft2D midlet;
+    Minicraft2D midlet;
     Display disp;
     Vector worlds = new Vector();
     WorldInfo curWorld, jobWorld, delTarget;
@@ -357,7 +361,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     int[][] rPat = new int[96][];
 
     // ---------------------------------------------------------------- inicio
-    public Minecraft3DCanvas(Minecraft2D m, Display d) {
+    public Minicraft3DCanvas(Minicraft2D m, Display d) {
         midlet = m;
         disp = d;
         setFullScreenMode(true);
@@ -424,7 +428,11 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     public void run() {
         while (running) {
             long t0 = System.currentTimeMillis();
-            update();
+            if (EMU) {
+                if (emuNext == 0 || t0 - emuNext > 250) emuNext = t0;   // atrasado de mas (carga, pausa): no recuperar de golpe
+                int emuSteps = 0;
+                while (emuNext <= t0 && emuSteps < 5) { update(); emuNext += 50; emuSteps++; }
+            } else update();
             int j = job;
             if (j == 0 && needSave) j = J_SAVE;
             if (j == 0 && needFlush) j = J_FLUSH;
@@ -437,6 +445,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             long dt = System.currentTimeMillis() - t0;
             long sl = 50 - dt;
             if (sl < 5) sl = 5;
+            if (EMU) { serviceRepaints(); sl = 1; }
             try { Thread.sleep(sl); } catch (Exception e) {}
         }
         closeStore();
@@ -2115,7 +2124,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         rd = newRd;
         nb = 2 * rd + 1;
         cullSq = 2f * (rd + 1) * (rd + 1) + 400f;
-        int nn = (rd <= 7) ? 2 : 3;
+        int nn = (rd <= 7) ? 2 : (EMU ? (2 * rd + 1 + 15) / 16 + 1 : 3);
         if (chData == null || nn != nc) {
             chData = null;
             nc = nn;
@@ -3342,6 +3351,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     void update() {
         synchronized (lock) {
             tick++;
+            if (EMU) { emuPX = px; emuPY = py; emuPZ = pz; emuDYaw = 0f; emuDPitch = 0f; emuTickT = System.currentTimeMillis(); }
             // red de seguridad: si el dedo ya no esta apoyado, ningun control tactil puede quedar activo
             if (!tpDown && (tcMode != 0 || tFw || tBk || tL || tR || tJp)) tcCancel();
             if (labelT > 0) labelT--;
@@ -3358,14 +3368,21 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
             updateSaplings();
             if (dim == 0 && tick % 200 == 0) growCrops();
             if (++autoT >= 2400) { autoT = 0; needSave = true; }
-            updatePlayer();
+            if (EMU) {
+                float y0 = yaw, p0 = pitch;
+                updatePlayer();
+                emuDYaw = yaw - y0;
+                emuDPitch = pitch - p0;
+                if (emuDYaw > 0.6f || emuDYaw < -0.6f) emuDYaw = 0f;
+                if (emuDPitch > 0.6f || emuDPitch < -0.6f) emuDPitch = 0f;
+            } else updatePlayer();
             if (dim == 2 && py < 8f) {   // cayo al vacio
                 if (creative) { px = 34.5f; pz = 0.5f; py = 34f; vy = 0; fallDist = 0; }
                 else hurt(99);
             }
             updatePortal();
             updateWindow(false);
-            loadMissing(1);
+            loadMissing(EMU ? 2 : 1);
             updateMobs();
             castRay();
             updateAction();
@@ -6422,8 +6439,22 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         gg.fillRect(0, 0, sw, sh);
 
         camX = px; camY = py + EYE; camZ = pz;
-        cosY = (float) Math.cos(yaw); sinY = (float) Math.sin(yaw);
-        cosP = (float) Math.cos(pitch); sinP = (float) Math.sin(pitch);
+        float eyaw = yaw, epitch = pitch;
+        if (EMU) {
+            float al = (System.currentTimeMillis() - emuTickT) / 50f;
+            if (al < 0f) al = 0f;
+            if (al > 1f) al = 1f;
+            float ddx = px - emuPX, ddy = py - emuPY, ddz = pz - emuPZ;
+            if (ddx * ddx + ddy * ddy + ddz * ddz < 9f) {   // un salto grande (portal, reaparecer) no se interpola
+                camX = px - ddx * (1f - al);
+                camY = py - ddy * (1f - al) + EYE;
+                camZ = pz - ddz * (1f - al);
+            }
+            eyaw = yaw - emuDYaw * (1f - al);
+            epitch = pitch - emuDPitch * (1f - al);
+        }
+        cosY = (float) Math.cos(eyaw); sinY = (float) Math.sin(eyaw);
+        cosP = (float) Math.cos(epitch); sinP = (float) Math.sin(epitch);
         fx = sinY * cosP; fy = sinP; fz = cosY * cosP;
         halfW = sw / 2f; halfH = sh / 2f;
         focal = halfW / (float) Math.tan(FOV / 2f);
@@ -6528,7 +6559,8 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
         while (mp < nm) { drawMob((Mob) mobs.elementAt(mobOrd[mp])); mp++; }
         drawRodAndLine();
         long dt = System.currentTimeMillis() - t0;
-        if (dt > 110) { cullK *= 0.94f; if (cullK < 0.3f) cullK = 0.3f; }
+        if (EMU) cullK = 1f;
+        else if (dt > 110) { cullK *= 0.94f; if (cullK < 0.3f) cullK = 0.3f; }
         else if (dt < 70 && cullK < 1f) { cullK *= 1.03f; if (cullK > 1f) cullK = 1f; }
 
         if (ty >= 0 && tMob == null) drawWire(tx, ty, tz);
@@ -7066,7 +7098,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
     }
 
     int drawLogo(int y) {
-        title("MINECRAFT", y, fontBig, 0xC6C6C6, 0x2B2B2B);
+        title("MINICRAFT", y, fontBig, 0xC6C6C6, 0x2B2B2B);
         y += fontBig.getHeight() + 1;
         title("MICRO EDITION", y, fontMid, 0xFFE24A, 0x3A3000);
         return y + fontMid.getHeight();
@@ -7370,7 +7402,7 @@ class Minecraft3DCanvas extends Canvas implements Runnable, CommandListener {
                 dbgMemT = now;
                 Runtime rt = Runtime.getRuntime();
                 rt.gc();
-                long live = rt.totalMemory() - rt.freeMemory() - Minecraft2D.memBase;
+                long live = rt.totalMemory() - rt.freeMemory() - Minicraft2D.memBase;
                 sb.append("RAM juego ").append(live / 1024).append('K');
                 dbgMem = sb.toString();
                 sb.setLength(0);

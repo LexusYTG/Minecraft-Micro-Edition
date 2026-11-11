@@ -12,9 +12,9 @@ LIB_DIR="$TOOLS_DIR/lib"
 PROGUARD_JAR="$TOOLS_DIR/proguard.jar"
 
 FINAL_DIR="$HOME/MME/MMEfinal/j2me"
-MIDLET_NAME="Minecraft2D"
-RAW_JAR="$BUILD_DIR/Minecraft-Micro-Edition-j2me-raw.jar"
-FINAL_JAR="$BUILD_DIR/Minecraft-Micro-Edition-j2me.jar"
+MIDLET_NAME="Minicraft2D"
+RAW_JAR="$BUILD_DIR/Minicraft-Micro-Edition-j2me-raw.jar"
+FINAL_JAR="$BUILD_DIR/Minicraft-Micro-Edition-j2me.jar"
 
 # --- 2. Preparación ---
 mkdir -p "$BUILD_DIR" "$CLASSES_DIR" "$FINAL_DIR"

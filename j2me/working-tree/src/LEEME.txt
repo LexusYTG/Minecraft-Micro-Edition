@@ -1,8 +1,8 @@
-SISTEMA DE IDIOMAS - Minecraft2D
+SISTEMA DE IDIOMAS - Minicraft2D
 ================================
 
 Contenido del zip
-  Minecraft2D.java        el juego (ya adaptado)
+  Minicraft2D.java        el juego (ya adaptado)
   leng/idiomas.txt        TODOS los idiomas en un solo archivo
 
 Armado

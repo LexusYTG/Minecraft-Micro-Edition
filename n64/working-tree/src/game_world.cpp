@@ -1413,7 +1413,7 @@ void Game::loadChests() {
 }
 
 // ---------------------------------------------------------------- idiomas
-// Mismo sistema que la version Java (Minecraft2D.java): TODOS los idiomas viven en UN archivo,
+// Mismo sistema que la version Java (Minicraft2D.java): TODOS los idiomas viven en UN archivo,
 // leng/idiomas.txt (el formato esta explicado en el propio archivo y es el mismo en todas las
 // plataformas). Para agregar un idioma solo se edita ese archivo, no este codigo.
 //
